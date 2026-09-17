@@ -65,5 +65,6 @@
 - `docs/web-api.md` — 웹페이지가 쓰는 provider API
 - `docs/server.md` — 서버 API, 배포, 운영
 - `docs/development.md` — 개발 환경, 빌드, 도구, 품질 게이트
+- `docs/audit.md` — 외부 보안 감사 계획
 - `docs/roadmap.md` — 단계별 계획과 후속 과제(생체인증 포함)
 - `docs/adr/` — 아키텍처 결정 기록
