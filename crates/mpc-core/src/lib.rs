@@ -7,13 +7,26 @@
 //! 업스트림 타입을 직접 참조하지 않으므로 라이브러리 교체가 가능하다
 //! (`docs/adr/0004-mpc-library-reselection.md`).
 
+mod backend;
 pub mod session;
 pub mod share;
 
 use core::fmt;
 
+pub use backend::{dkg, refresh, sign, verify};
 pub use session::{Round, SessionId};
 pub use share::{KeyShare, PartyId, PublicKey};
+
+/// 임계 ECDSA 서명 (secp256k1).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Signature {
+    /// r 성분.
+    pub r: [u8; 32],
+    /// s 성분. low-s로 정규화된다.
+    pub s: [u8; 32],
+    /// 공개키 복구 식별자.
+    pub recovery_id: u8,
+}
 
 /// 셰어 3개 중 서명에 필요한 최소 개수.
 pub const THRESHOLD: u8 = 2;
@@ -49,29 +62,6 @@ pub enum Error {
 
 /// 프로토콜 결과 타입.
 pub type Result<T> = core::result::Result<T, Error>;
-
-/// 업스트림 MPC 구현이 만족해야 하는 인터페이스.
-///
-/// Phase 1에서 `0xCarbon/DKLs23` 백엔드를 이 트레이트로 구현한다.
-/// 상위 계층(확장 background, 서버 핸들러)은 이 트레이트만 본다.
-pub trait Mpc {
-    /// 분산 키 생성. 성공 시 자신의 셰어와 공동 공개키를 얻는다.
-    fn keygen(&mut self, session: SessionId, party: PartyId) -> Result<(KeyShare, PublicKey)>;
-
-    /// 임계 서명. `THRESHOLD`개의 셰어가 참여해야 한다.
-    fn sign(
-        &mut self,
-        session: SessionId,
-        shares: &[&KeyShare],
-        digest: &[u8; 32],
-    ) -> Result<Vec<u8>>;
-
-    /// 키 리프레시(리셰어). 공개키를 유지한 채 셰어만 재생성한다.
-    ///
-    /// 복구 직후 반드시 실행하여 분실 셰어를 무효화하고 2-of-3 상태로 되돌린다.
-    /// 이 기능이 없으면 복구는 주소 변경을 동반한 이전이 된다 (`docs/recovery.md`).
-    fn refresh(&mut self, session: SessionId, share: &KeyShare) -> Result<KeyShare>;
-}
 
 impl fmt::Display for PartyId {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
