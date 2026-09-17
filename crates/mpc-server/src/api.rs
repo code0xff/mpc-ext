@@ -11,7 +11,7 @@ use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
 use axum::routing::{get, post};
 use axum::{Json, Router};
-use mpc_core::{DkgParty, Envelope, PartyId, Progress};
+use mpc_core::{DkgParty, Envelope, KeyShare, PartyId, Progress, SignParty, SignProgress};
 use serde::{Deserialize, Serialize};
 use utoipa::{OpenApi, ToSchema};
 use utoipa_swagger_ui::SwaggerUi;
@@ -243,11 +243,180 @@ async fn advance_dkg(
     }
 }
 
+/// A request to open a signing session.
+#[derive(Debug, Deserialize, ToSchema)]
+pub struct StartSign {
+    /// The wallet identifier.
+    pub wallet_id: String,
+    /// A unique id for this signature, 64 hex characters. Never reuse one.
+    pub sign_id: String,
+    /// The 32-byte digest being signed, hex-encoded.
+    pub digest: String,
+    /// Which party the client is driving (0 for the extension share, 1 for the recovery file).
+    pub counterparty: u8,
+}
+
+/// The response to opening a signing session.
+#[derive(Debug, Serialize, ToSchema)]
+pub struct StartedSign {
+    /// The round 1 envelopes the server sends.
+    pub envelopes: Vec<WireEnvelope>,
+}
+
+/// A request to advance a signing round.
+#[derive(Debug, Deserialize, ToSchema)]
+pub struct AdvanceSign {
+    /// The wallet identifier.
+    pub wallet_id: String,
+    /// The signature id, 64 hex characters.
+    pub sign_id: String,
+    /// The envelopes being delivered to the server.
+    pub envelopes: Vec<WireEnvelope>,
+}
+
+/// The response to advancing a signing round.
+#[derive(Debug, Serialize, ToSchema)]
+#[serde(tag = "state", rename_all = "camelCase")]
+pub enum AdvancedSign {
+    /// Still running. Deliver the envelopes and call again.
+    InProgress {
+        /// The envelopes the server sends.
+        envelopes: Vec<WireEnvelope>,
+    },
+    /// Signing finished. The signature is returned as 65 hex-encoded bytes (r || s || v).
+    Completed {
+        /// The signature, hex-encoded.
+        signature: String,
+    },
+}
+
+/// Opens a signing session and returns the server's round 1 envelopes.
+///
+/// The server is a second factor, so this is where policy belongs: rate limits, anomaly
+/// blocking and user confirmation all hang off this endpoint once authentication exists
+/// (`docs/server.md`).
+#[utoipa::path(
+    post,
+    path = "/v1/sign/session",
+    request_body = StartSign,
+    responses(
+        (status = 200, description = "session opened", body = StartedSign),
+        (status = 404, description = "no key for this wallet"),
+    ),
+)]
+async fn start_sign(
+    State(state): State<AppState>,
+    Json(request): Json<StartSign>,
+) -> Result<Json<StartedSign>, ApiError> {
+    let sign_id = parse_hex32(&request.sign_id, "sign_id")?;
+    let digest = parse_hex32(&request.digest, "digest")?;
+
+    let sealed = state
+        .store
+        .key_share(&request.wallet_id)
+        .await?
+        .ok_or(Error::UnknownSession)?;
+    let share = KeyShare::new(SERVER_PARTY, state.sealing.open(&sealed)?);
+
+    let (party, envelopes) =
+        SignParty::start(&share, PartyId(request.counterparty), &sign_id, &digest)?;
+
+    let sealed = state.sealing.seal(&party.to_bytes()?)?;
+    state
+        .store
+        .put_sign_session(
+            &request.sign_id,
+            &request.wallet_id,
+            1,
+            &sealed,
+            &digest,
+            SESSION_TTL_SECONDS,
+        )
+        .await?;
+
+    Ok(Json(StartedSign {
+        envelopes: envelopes.into_iter().map(WireEnvelope::from).collect(),
+    }))
+}
+
+/// Advances the signing protocol by one round.
+#[utoipa::path(
+    post,
+    path = "/v1/sign/round",
+    request_body = AdvanceSign,
+    responses(
+        (status = 200, description = "round advanced, or signing complete", body = AdvancedSign),
+        (status = 404, description = "unknown or expired session"),
+    ),
+)]
+async fn advance_sign(
+    State(state): State<AppState>,
+    Json(request): Json<AdvanceSign>,
+) -> Result<Json<AdvancedSign>, ApiError> {
+    let sealed = state
+        .store
+        .take_sign_session(&request.sign_id)
+        .await?
+        .ok_or(Error::UnknownSession)?;
+    let mut party = SignParty::from_bytes(&state.sealing.open(&sealed)?)?;
+
+    let inbox: Vec<Envelope> = request
+        .envelopes
+        .into_iter()
+        .map(Envelope::try_from)
+        .collect::<Result<_, _>>()?;
+
+    match party.advance(&inbox)? {
+        SignProgress::Send(outgoing) => {
+            let round = i64::from(outgoing.first().map_or(0, |e| e.round));
+            let sealed = state.sealing.seal(&party.to_bytes()?)?;
+            state
+                .store
+                .put_sign_session(
+                    &request.sign_id,
+                    &request.wallet_id,
+                    round,
+                    &sealed,
+                    &[],
+                    SESSION_TTL_SECONDS,
+                )
+                .await?;
+            Ok(Json(AdvancedSign::InProgress {
+                envelopes: outgoing.into_iter().map(WireEnvelope::from).collect(),
+            }))
+        }
+        SignProgress::Done(signature) => {
+            state
+                .store
+                .finish_sign(&request.sign_id, &request.wallet_id)
+                .await?;
+            let mut bytes = Vec::with_capacity(65);
+            bytes.extend_from_slice(&signature.r);
+            bytes.extend_from_slice(&signature.s);
+            bytes.push(signature.recovery_id);
+            Ok(Json(AdvancedSign::Completed {
+                signature: hex(&bytes),
+            }))
+        }
+    }
+}
+
 /// The root of the OpenAPI spec.
 #[derive(Debug, OpenApi)]
 #[openapi(
-    paths(health, start_dkg, advance_dkg),
-    components(schemas(Health, StartDkg, StartedDkg, AdvanceDkg, AdvancedDkg, WireEnvelope)),
+    paths(health, start_dkg, advance_dkg, start_sign, advance_sign),
+    components(schemas(
+        Health,
+        StartDkg,
+        StartedDkg,
+        AdvanceDkg,
+        AdvancedDkg,
+        StartSign,
+        StartedSign,
+        AdvanceSign,
+        AdvancedSign,
+        WireEnvelope,
+    )),
     info(
         title = "mpc-ext server",
         description = "Holds one share of a 2-of-3 MPC key and joins signing. Authentication is not designed yet.",
@@ -261,6 +430,8 @@ pub fn router(state: AppState) -> Router {
         .route("/v1/health", get(health))
         .route("/v1/dkg/session", post(start_dkg))
         .route("/v1/dkg/round", post(advance_dkg))
+        .route("/v1/sign/session", post(start_sign))
+        .route("/v1/sign/round", post(advance_sign))
         .merge(SwaggerUi::new("/docs").url("/openapi.json", ApiDoc::openapi()))
         .with_state(state)
 }
@@ -303,18 +474,23 @@ impl IntoResponse for ApiError {
 }
 
 fn parse_session_id(value: &str) -> Result<[u8; 32], Error> {
+    parse_hex32(value, "session_id")
+}
+
+/// Parses a 32-byte hex value, naming the field in any error.
+fn parse_hex32(value: &str, field: &str) -> Result<[u8; 32], Error> {
     if value.len() != 64 {
-        return Err(Error::Protocol(
-            "session_id must be 64 hex characters".into(),
-        ));
+        return Err(Error::Protocol(format!(
+            "{field} must be 64 hex characters"
+        )));
     }
     let mut out = [0u8; 32];
     for (i, slot) in out.iter_mut().enumerate() {
         let pair = value
             .get(i * 2..i * 2 + 2)
-            .ok_or_else(|| Error::Protocol("session_id is malformed".into()))?;
+            .ok_or_else(|| Error::Protocol(format!("{field} is malformed")))?;
         *slot = u8::from_str_radix(pair, 16)
-            .map_err(|_| Error::Protocol("session_id is not hex".into()))?;
+            .map_err(|_| Error::Protocol(format!("{field} is not hex")))?;
     }
     Ok(out)
 }

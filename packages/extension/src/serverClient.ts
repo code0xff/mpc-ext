@@ -77,6 +77,40 @@ export async function advanceDkg(
   });
 }
 
+export type SignResult =
+  { state: 'inProgress'; envelopes: WireEnvelope[] } | { state: 'completed'; signature: string };
+
+/** Opens a signing session and collects the server's round 1 envelopes. */
+export async function startSign(
+  baseUrl: string,
+  walletId: string,
+  signIdHex: string,
+  digestHex: string,
+  counterparty: number,
+): Promise<WireEnvelope[]> {
+  const body = await post<{ envelopes: WireEnvelope[] }>(baseUrl, '/v1/sign/session', {
+    wallet_id: walletId,
+    sign_id: signIdHex,
+    digest: digestHex,
+    counterparty,
+  });
+  return body.envelopes;
+}
+
+/** Sends signing envelopes and receives the next round. */
+export async function advanceSign(
+  baseUrl: string,
+  walletId: string,
+  signIdHex: string,
+  envelopes: WireEnvelope[],
+): Promise<SignResult> {
+  return post<SignResult>(baseUrl, '/v1/sign/round', {
+    wallet_id: walletId,
+    sign_id: signIdHex,
+    envelopes,
+  });
+}
+
 /** Checks whether the server is reachable. */
 export async function health(baseUrl: string): Promise<boolean> {
   try {

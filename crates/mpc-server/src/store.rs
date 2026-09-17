@@ -128,6 +128,97 @@ impl Store {
         Ok(Some((round, Sealed { ciphertext, nonce })))
     }
 
+    /// Loads the sealed share for a wallet.
+    pub async fn key_share(&self, wallet_id: &str) -> Result<Option<Sealed>, Error> {
+        let row: Option<(Vec<u8>, Vec<u8>)> =
+            sqlx::query_as("SELECT ciphertext, nonce FROM key_shares WHERE wallet_id = ?")
+                .bind(wallet_id)
+                .fetch_optional(&self.pool)
+                .await?;
+        Ok(row.map(|(ciphertext, nonce)| Sealed { ciphertext, nonce }))
+    }
+
+    /// Stores the state of an in-flight signing session.
+    pub async fn put_sign_session(
+        &self,
+        sign_id: &str,
+        wallet_id: &str,
+        round: i64,
+        state: &Sealed,
+        digest: &[u8],
+        ttl_seconds: i64,
+    ) -> Result<(), Error> {
+        let now = time::OffsetDateTime::now_utc();
+        let expires = now + time::Duration::seconds(ttl_seconds);
+        sqlx::query(
+            "INSERT INTO sign_sessions
+               (sign_id, wallet_id, round, state, nonce, digest, created_at, expires_at)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+             ON CONFLICT(sign_id) DO UPDATE SET round = excluded.round,
+                                                state = excluded.state,
+                                                nonce = excluded.nonce",
+        )
+        .bind(sign_id)
+        .bind(wallet_id)
+        .bind(round)
+        .bind(&state.ciphertext)
+        .bind(&state.nonce)
+        .bind(digest)
+        .bind(format_time(now))
+        .bind(format_time(expires))
+        .execute(&self.pool)
+        .await?;
+        Ok(())
+    }
+
+    /// Reads signing session state that has not expired.
+    pub async fn take_sign_session(&self, sign_id: &str) -> Result<Option<Sealed>, Error> {
+        let row: Option<(Vec<u8>, Vec<u8>, String)> =
+            sqlx::query_as("SELECT state, nonce, expires_at FROM sign_sessions WHERE sign_id = ?")
+                .bind(sign_id)
+                .fetch_optional(&self.pool)
+                .await?;
+
+        let Some((ciphertext, nonce, expires_at)) = row else {
+            return Ok(None);
+        };
+
+        if expires_at.as_str() < format_time(time::OffsetDateTime::now_utc()).as_str() {
+            sqlx::query("DELETE FROM sign_sessions WHERE sign_id = ?")
+                .bind(sign_id)
+                .execute(&self.pool)
+                .await?;
+            return Ok(None);
+        }
+
+        Ok(Some(Sealed { ciphertext, nonce }))
+    }
+
+    /// Closes a signing session and records the outcome.
+    ///
+    /// The audit log keeps the digest only, never the signature or any secret.
+    pub async fn finish_sign(&self, sign_id: &str, wallet_id: &str) -> Result<(), Error> {
+        let now = timestamp();
+        let mut tx = self.pool.begin().await?;
+
+        sqlx::query("DELETE FROM sign_sessions WHERE sign_id = ?")
+            .bind(sign_id)
+            .execute(&mut *tx)
+            .await?;
+        sqlx::query(
+            "INSERT INTO audit_log (wallet_id, event, detail, created_at)
+             VALUES (?, 'sign.completed', ?, ?)",
+        )
+        .bind(wallet_id)
+        .bind(sign_id)
+        .bind(&now)
+        .execute(&mut *tx)
+        .await?;
+
+        tx.commit().await?;
+        Ok(())
+    }
+
     /// Reads a wallet's public key. Never returns the share itself.
     pub async fn public_key(&self, wallet_id: &str) -> Result<Option<Vec<u8>>, Error> {
         let row: Option<(Vec<u8>,)> =
@@ -138,13 +229,18 @@ impl Store {
         Ok(row.map(|(pk,)| pk))
     }
 
-    /// Sweeps expired sessions.
+    /// Sweeps expired sessions of both kinds.
     pub async fn sweep_expired(&self) -> Result<u64, Error> {
-        let result = sqlx::query("DELETE FROM dkg_sessions WHERE expires_at < ?")
-            .bind(format_time(time::OffsetDateTime::now_utc()))
+        let now = format_time(time::OffsetDateTime::now_utc());
+        let dkg = sqlx::query("DELETE FROM dkg_sessions WHERE expires_at < ?")
+            .bind(&now)
             .execute(&self.pool)
             .await?;
-        Ok(result.rows_affected())
+        let signing = sqlx::query("DELETE FROM sign_sessions WHERE expires_at < ?")
+            .bind(&now)
+            .execute(&self.pool)
+            .await?;
+        Ok(dkg.rows_affected() + signing.rows_affected())
     }
 }
 

@@ -53,7 +53,7 @@ pub(crate) fn encode(party: &UpstreamParty) -> Result<Vec<u8>> {
     bincode::serialize(party).map_err(|e| Error::Backend(format!("share encode: {e}")))
 }
 
-fn decode(share: &KeyShare) -> Result<UpstreamParty> {
+pub(crate) fn decode(share: &KeyShare) -> Result<UpstreamParty> {
     bincode::deserialize(share.expose_secret())
         .map_err(|e| Error::Backend(format!("share decode: {e}")))
 }

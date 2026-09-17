@@ -92,6 +92,71 @@
           }
         }
       }
+    },
+    "/v1/sign/round": {
+      "post": {
+        "tags": [],
+        "summary": "Advances the signing protocol by one round.",
+        "operationId": "advance_sign",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AdvanceSign"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "round advanced, or signing complete",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AdvancedSign"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "unknown or expired session"
+          }
+        }
+      }
+    },
+    "/v1/sign/session": {
+      "post": {
+        "tags": [],
+        "summary": "Opens a signing session and returns the server's round 1 envelopes.",
+        "description": "The server is a second factor, so this is where policy belongs: rate limits, anomaly\nblocking and user confirmation all hang off this endpoint once authentication exists\n(`docs/server.md`).",
+        "operationId": "start_sign",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/StartSign"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "session opened",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StartedSign"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "no key for this wallet"
+          }
+        }
+      }
     }
   },
   "components": {
@@ -115,6 +180,32 @@
           "session_id": {
             "type": "string",
             "description": "The session id, 64 hex characters."
+          },
+          "wallet_id": {
+            "type": "string",
+            "description": "The wallet identifier."
+          }
+        }
+      },
+      "AdvanceSign": {
+        "type": "object",
+        "description": "A request to advance a signing round.",
+        "required": [
+          "wallet_id",
+          "sign_id",
+          "envelopes"
+        ],
+        "properties": {
+          "envelopes": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/WireEnvelope"
+            },
+            "description": "The envelopes being delivered to the server."
+          },
+          "sign_id": {
+            "type": "string",
+            "description": "The signature id, 64 hex characters."
           },
           "wallet_id": {
             "type": "string",
@@ -170,6 +261,54 @@
         ],
         "description": "The response to advancing a DKG round."
       },
+      "AdvancedSign": {
+        "oneOf": [
+          {
+            "type": "object",
+            "description": "Still running. Deliver the envelopes and call again.",
+            "required": [
+              "envelopes",
+              "state"
+            ],
+            "properties": {
+              "envelopes": {
+                "type": "array",
+                "items": {
+                  "$ref": "#/components/schemas/WireEnvelope"
+                },
+                "description": "The envelopes the server sends."
+              },
+              "state": {
+                "type": "string",
+                "enum": [
+                  "inProgress"
+                ]
+              }
+            }
+          },
+          {
+            "type": "object",
+            "description": "Signing finished. The signature is returned as 65 hex-encoded bytes (r || s || v).",
+            "required": [
+              "signature",
+              "state"
+            ],
+            "properties": {
+              "signature": {
+                "type": "string",
+                "description": "The signature, hex-encoded."
+              },
+              "state": {
+                "type": "string",
+                "enum": [
+                  "completed"
+                ]
+              }
+            }
+          }
+        ],
+        "description": "The response to advancing a signing round."
+      },
       "Health": {
         "type": "object",
         "description": "The health-check response.",
@@ -206,9 +345,55 @@
           }
         }
       },
+      "StartSign": {
+        "type": "object",
+        "description": "A request to open a signing session.",
+        "required": [
+          "wallet_id",
+          "sign_id",
+          "digest",
+          "counterparty"
+        ],
+        "properties": {
+          "counterparty": {
+            "type": "integer",
+            "format": "int32",
+            "description": "Which party the client is driving (0 for the extension share, 1 for the recovery file).",
+            "minimum": 0
+          },
+          "digest": {
+            "type": "string",
+            "description": "The 32-byte digest being signed, hex-encoded."
+          },
+          "sign_id": {
+            "type": "string",
+            "description": "A unique id for this signature, 64 hex characters. Never reuse one."
+          },
+          "wallet_id": {
+            "type": "string",
+            "description": "The wallet identifier."
+          }
+        }
+      },
       "StartedDkg": {
         "type": "object",
         "description": "The response to opening a DKG session.",
+        "required": [
+          "envelopes"
+        ],
+        "properties": {
+          "envelopes": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/WireEnvelope"
+            },
+            "description": "The round 1 envelopes the server sends."
+          }
+        }
+      },
+      "StartedSign": {
+        "type": "object",
+        "description": "The response to opening a signing session.",
         "required": [
           "envelopes"
         ],

@@ -37,7 +37,7 @@
 
 - [x] Per-party session API — round state sealed and stored between requests
 - [x] `mpc-server` joins DKG (SQLite + OpenAPI/Swagger UI, spec pinned in `docs/openapi.json`)
-- [ ] **Everyday signing transport** — extension (A) ↔ server (C) round exchange
+- [x] **Everyday signing transport** — extension (A) ↔ server (C) round exchange, verified end to end over HTTP
 - [ ] The A+B emergency signing path for server outages
 - [ ] Recovery flow (B+C) and reshare
 - [ ] Settle the server authentication design (cooling-off, notification, cancellation)

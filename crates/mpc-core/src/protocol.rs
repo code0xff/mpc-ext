@@ -15,6 +15,10 @@ use dkls23_secp256k1::protocols::dkg::{
     TransmitInitMulPhase3to4, TransmitInitZeroSharePhase2to4, TransmitInitZeroSharePhase3to4,
     UniqueKeepDerivationPhase2to3,
 };
+use dkls23_secp256k1::protocols::signing::{
+    Broadcast3to4, KeepPhase1to2, KeepPhase2to3, SignData, TransmitPhase1to2, TransmitPhase2to3,
+    UniqueKeep1to2, UniqueKeep2to3,
+};
 use dkls23_secp256k1::protocols::{Parameters, PartyIndex};
 use k256::Secp256k1;
 use serde::{Deserialize, Serialize};
@@ -428,4 +432,303 @@ pub fn run_locally(session_id: &[u8; 32]) -> Result<(Vec<KeyShare>, PublicKey)> 
         }
         in_flight = next;
     }
+}
+
+/// One party taking part in threshold signing.
+///
+/// It runs four rounds, in the same shape as [`DkgParty`]: deliver what [`Progress::Send`]
+/// yields, then feed the replies into [`Self::advance`].
+///
+/// Unlike DKG, exactly [`crate::THRESHOLD`] parties take part, and which two they are depends on
+/// the situation — extension plus server day to day, or extension plus recovery file when the
+/// server is unreachable (`docs/recovery.md`).
+#[derive(Serialize, Deserialize)]
+pub struct SignParty {
+    me: PartyId,
+    counterparty: PartyId,
+    round: u8,
+    /// The share this party signs with. Contains a secret, so serialized state must be sealed.
+    share: Vec<u8>,
+    data: SignData,
+    keep_1to2: Option<Keep1to2>,
+    keep_2to3: Option<Keep2to3>,
+    x_coord: Option<String>,
+    broadcasts: Vec<Broadcast3to4<Secp256k1>>,
+}
+
+impl core::fmt::Debug for SignParty {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        f.debug_struct("SignParty")
+            .field("me", &self.me)
+            .field("counterparty", &self.counterparty)
+            .field("round", &self.round)
+            .finish_non_exhaustive()
+    }
+}
+
+/// What a signing party carries from round 1 into round 2.
+type Keep1to2 = (
+    UniqueKeep1to2<Secp256k1>,
+    BTreeMap<PartyIndex, KeepPhase1to2<Secp256k1>>,
+);
+
+/// What a signing party carries from round 2 into round 3.
+type Keep2to3 = (
+    UniqueKeep2to3<Secp256k1>,
+    BTreeMap<PartyIndex, KeepPhase2to3<Secp256k1>>,
+);
+
+/// The outcome of advancing a signing round.
+#[derive(Debug)]
+pub enum SignProgress {
+    /// There are messages to send.
+    Send(Vec<Envelope>),
+    /// Signing finished.
+    Done(crate::Signature),
+}
+
+impl SignParty {
+    /// Opens a signing session and produces the round 1 messages.
+    ///
+    /// `sign_id` must be unique per signature and shared by both parties. `digest` is the
+    /// 32-byte hash being signed.
+    pub fn start(
+        share: &KeyShare,
+        counterparty: PartyId,
+        sign_id: &[u8; 32],
+        digest: &[u8; 32],
+    ) -> Result<(Self, Vec<Envelope>)> {
+        let me = share.party();
+        if me == counterparty {
+            return Err(Error::Backend(
+                "a party cannot sign with itself as counterparty".into(),
+            ));
+        }
+
+        let party = crate::backend::decode(share)?;
+        let data = SignData {
+            sign_id: sign_id.to_vec(),
+            counterparties: vec![to_index(counterparty)?],
+            message_hash: *digest,
+        };
+
+        let (unique_kept, kept, transmit) = party
+            .sign_phase1(&data)
+            .map_err(|e| Error::Backend(format!("sign phase1: {e:?}")))?;
+
+        let outgoing = transmit
+            .iter()
+            .map(|message| Envelope::new(1, me, Some(to_party(message.parties.receiver)), message))
+            .collect::<Result<Vec<_>>>()?;
+
+        Ok((
+            Self {
+                me,
+                counterparty,
+                round: 1,
+                share: share.expose_secret().to_vec(),
+                data,
+                keep_1to2: Some((unique_kept, kept)),
+                keep_2to3: None,
+                x_coord: None,
+                broadcasts: Vec::new(),
+            },
+            outgoing,
+        ))
+    }
+
+    /// This party's identifier.
+    pub fn party(&self) -> PartyId {
+        self.me
+    }
+
+    /// Serializes the state so it can be held between rounds.
+    ///
+    /// The result **contains the key share.** It must be encrypted before being stored.
+    pub fn to_bytes(&self) -> Result<Vec<u8>> {
+        bincode::serialize(self).map_err(|e| Error::Backend(format!("session encode: {e}")))
+    }
+
+    /// Restores state produced by [`Self::to_bytes`].
+    pub fn from_bytes(bytes: &[u8]) -> Result<Self> {
+        bincode::deserialize(bytes).map_err(|e| Error::Backend(format!("session decode: {e}")))
+    }
+
+    /// Consumes the received envelopes and advances to the next round.
+    pub fn advance(&mut self, inbox: &[Envelope]) -> Result<SignProgress> {
+        for envelope in inbox {
+            if envelope.round != self.round {
+                return Err(Error::UnexpectedRound {
+                    expected: crate::Round::Round(self.round),
+                    got: crate::Round::Round(envelope.round),
+                });
+            }
+            if envelope.from != self.counterparty {
+                return Err(Error::Backend(format!(
+                    "envelope from {} is not from the expected counterparty {}",
+                    envelope.from, self.counterparty
+                )));
+            }
+            if let Some(target) = envelope.to {
+                if target != self.me {
+                    return Err(Error::Backend(format!(
+                        "envelope addressed to {target} arrived at {}",
+                        self.me
+                    )));
+                }
+            }
+        }
+
+        let party = crate::backend::decode(&KeyShare::new(self.me, self.share.clone()))?;
+        match self.round {
+            1 => self.round2(&party, inbox),
+            2 => self.round3(&party, inbox),
+            3 => self.round4(&party, inbox),
+            other => Err(Error::Backend(format!("signing has no round {other}"))),
+        }
+    }
+
+    fn round2(
+        &mut self,
+        party: &dkls23_secp256k1::protocols::Party<Secp256k1>,
+        inbox: &[Envelope],
+    ) -> Result<SignProgress> {
+        let received: Vec<TransmitPhase1to2> = inbox
+            .iter()
+            .map(Envelope::decode)
+            .collect::<Result<Vec<_>>>()?;
+        let (unique_kept, kept) = self
+            .keep_1to2
+            .take()
+            .ok_or_else(|| Error::Backend("round 2 called out of order".into()))?;
+
+        let (new_unique, new_kept, transmit) = party
+            .sign_phase2(&self.data, &unique_kept, &kept, &received)
+            .map_err(|e| Error::Backend(format!("sign phase2: {e:?}")))?;
+        self.keep_2to3 = Some((new_unique, new_kept));
+
+        let me = self.me;
+        let outgoing = transmit
+            .iter()
+            .map(|message| Envelope::new(2, me, Some(to_party(message.parties.receiver)), message))
+            .collect::<Result<Vec<_>>>()?;
+
+        self.round = 2;
+        Ok(SignProgress::Send(outgoing))
+    }
+
+    fn round3(
+        &mut self,
+        party: &dkls23_secp256k1::protocols::Party<Secp256k1>,
+        inbox: &[Envelope],
+    ) -> Result<SignProgress> {
+        let received: Vec<TransmitPhase2to3<Secp256k1>> = inbox
+            .iter()
+            .map(Envelope::decode)
+            .collect::<Result<Vec<_>>>()?;
+        let (unique_kept, kept) = self
+            .keep_2to3
+            .take()
+            .ok_or_else(|| Error::Backend("round 3 called out of order".into()))?;
+
+        let (x_coord, broadcast) = party
+            .sign_phase3(&self.data, &unique_kept, &kept, &received)
+            .map_err(|e| Error::Backend(format!("sign phase3: {e:?}")))?;
+        self.x_coord = Some(x_coord);
+        // Our own broadcast counts towards phase 4 as well.
+        self.broadcasts.push(broadcast.clone());
+
+        self.round = 3;
+        Ok(SignProgress::Send(vec![Envelope::new(
+            3, self.me, None, &broadcast,
+        )?]))
+    }
+
+    fn round4(
+        &mut self,
+        party: &dkls23_secp256k1::protocols::Party<Secp256k1>,
+        inbox: &[Envelope],
+    ) -> Result<SignProgress> {
+        for envelope in inbox {
+            self.broadcasts.push(envelope.decode()?);
+        }
+
+        let x_coord = self
+            .x_coord
+            .take()
+            .ok_or_else(|| Error::Backend("round 4 called out of order".into()))?;
+
+        let (s_hex, recovery_id) = party
+            .sign_phase4(&self.data, &x_coord, &self.broadcasts, true)
+            .map_err(|e| Error::Backend(format!("sign phase4: {e:?}")))?;
+
+        let mut r = [0u8; 32];
+        let mut s = [0u8; 32];
+        hex_into(&x_coord, &mut r)?;
+        hex_into(&s_hex, &mut s)?;
+
+        self.round = 4;
+        Ok(SignProgress::Done(crate::Signature { r, s, recovery_id }))
+    }
+}
+
+fn hex_into(value: &str, out: &mut [u8; 32]) -> Result<()> {
+    if value.len() != 64 {
+        return Err(Error::Backend(format!(
+            "expected 64 hex characters, got {}",
+            value.len()
+        )));
+    }
+    for (i, slot) in out.iter_mut().enumerate() {
+        let pair = value
+            .get(i * 2..i * 2 + 2)
+            .ok_or_else(|| Error::Backend("malformed hex".into()))?;
+        *slot =
+            u8::from_str_radix(pair, 16).map_err(|_| Error::Backend("value is not hex".into()))?;
+    }
+    Ok(())
+}
+
+/// Drives two parties in one process so the signing exchange can be tested without transport.
+pub fn sign_locally(
+    first: &KeyShare,
+    second: &KeyShare,
+    sign_id: &[u8; 32],
+    digest: &[u8; 32],
+) -> Result<crate::Signature> {
+    let (mut a, mut in_flight) = SignParty::start(first, second.party(), sign_id, digest)?;
+    let (mut b, from_b) = SignParty::start(second, first.party(), sign_id, digest)?;
+    in_flight.extend(from_b);
+
+    let mut signature: Option<crate::Signature> = None;
+    for _ in 0..4 {
+        let mut next = Vec::new();
+        for party in [&mut a, &mut b] {
+            let me = party.party();
+            let inbox: Vec<Envelope> = in_flight
+                .iter()
+                .filter(|e| e.from != me && e.to.is_none_or(|to| to == me))
+                .cloned()
+                .collect();
+            match party.advance(&inbox)? {
+                SignProgress::Send(outgoing) => next.extend(outgoing),
+                SignProgress::Done(sig) => match &signature {
+                    Some(known) if *known != sig => {
+                        return Err(Error::Backend(
+                            "signers produced different signatures".into(),
+                        ))
+                    }
+                    _ => signature = Some(sig),
+                },
+            }
+        }
+        if let Some(sig) = signature {
+            return Ok(sig);
+        }
+        in_flight = next;
+    }
+
+    Err(Error::Backend(
+        "signing did not finish within four rounds".into(),
+    ))
 }

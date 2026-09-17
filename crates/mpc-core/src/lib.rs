@@ -15,7 +15,7 @@ pub mod share;
 use core::fmt;
 
 pub use backend::{dkg, export_private_key, refresh, reshare, sign, verify};
-pub use protocol::{DkgParty, Envelope, Progress};
+pub use protocol::{DkgParty, Envelope, Progress, SignParty, SignProgress};
 pub use session::{Round, SessionId};
 pub use share::{KeyShare, PartyId, PublicKey};
 

@@ -10,7 +10,7 @@
 use axum::body::Body;
 use axum::http::{Request, StatusCode};
 use base64::Engine;
-use mpc_core::{DkgParty, Envelope, PartyId, Progress};
+use mpc_core::{DkgParty, Envelope, PartyId, Progress, SignParty, SignProgress};
 use mpc_server::api::{router, AppState};
 use mpc_server::crypto::SealingKey;
 use mpc_server::store::Store;
@@ -202,4 +202,214 @@ async fn rejects_a_malformed_session_id() {
     .await;
 
     assert_eq!(status, StatusCode::BAD_REQUEST);
+}
+
+/// Runs a full DKG and returns the extension's two shares plus the wallet's public key.
+async fn provision(app: &axum::Router, wallet: &str, tag: u8) -> (Vec<mpc_core::KeyShare>, String) {
+    let session_hex = format!("{tag:02x}").repeat(32);
+    let session_id = [tag; 32];
+
+    let mut local = Vec::new();
+    let mut in_flight: Vec<Envelope> = Vec::new();
+    for id in [PartyId(0), PartyId(1)] {
+        let (party, outgoing) = DkgParty::start(id, &session_id).expect("the party should start");
+        local.push(party);
+        in_flight.extend(outgoing);
+    }
+
+    let (status, body) = post(
+        app,
+        "/v1/dkg/session",
+        json!({ "wallet_id": wallet, "session_id": session_hex }),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "the session should open: {body}");
+    for envelope in body["envelopes"].as_array().expect("envelopes") {
+        in_flight.push(from_wire(envelope));
+    }
+
+    let mut shares = Vec::new();
+    let mut public_key = String::new();
+
+    for _ in 0..4 {
+        let mut next: Vec<Envelope> = Vec::new();
+        for party in &mut local {
+            let me = party.party();
+            let inbox: Vec<Envelope> = in_flight
+                .iter()
+                .filter(|e| e.from != me && e.to.is_none_or(|to| to == me))
+                .cloned()
+                .collect();
+            match party.advance(&inbox).expect("the round should advance") {
+                Progress::Send(outgoing) => next.extend(outgoing),
+                Progress::Done { share, .. } => shares.push(share),
+            }
+        }
+
+        let for_server: Vec<Value> = in_flight
+            .iter()
+            .filter(|e| {
+                e.from != PartyId(SERVER_PARTY) && e.to.is_none_or(|to| to.0 == SERVER_PARTY)
+            })
+            .map(to_wire)
+            .collect();
+        let (status, body) = post(
+            app,
+            "/v1/dkg/round",
+            json!({ "session_id": session_hex, "wallet_id": wallet, "envelopes": for_server }),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "the round should advance: {body}");
+
+        match body["state"].as_str().expect("state") {
+            "inProgress" => {
+                for envelope in body["envelopes"].as_array().expect("envelopes") {
+                    next.push(from_wire(envelope));
+                }
+            }
+            "completed" => {
+                public_key = body["public_key"].as_str().expect("public_key").to_string();
+                break;
+            }
+            other => panic!("unknown state: {other}"),
+        }
+        in_flight = next;
+    }
+
+    shares.sort_by_key(|s| s.party().0);
+    (shares, public_key)
+}
+
+#[tokio::test]
+async fn extension_and_server_sign_together() {
+    let app = test_app().await;
+    let (shares, public_key_hex) = provision(&app, "wallet-sign", 0xb7).await;
+
+    let sign_hex = "c4".repeat(32);
+    let digest = [0x39u8; 32];
+    let digest_hex = "39".repeat(32);
+
+    // The extension drives share A; the server drives share C.
+    let (mut extension, mut in_flight) =
+        SignParty::start(&shares[0], PartyId(SERVER_PARTY), &[0xc4; 32], &digest)
+            .expect("the party should start");
+
+    let (status, body) = post(
+        &app,
+        "/v1/sign/session",
+        json!({
+            "wallet_id": "wallet-sign",
+            "sign_id": sign_hex,
+            "digest": digest_hex,
+            "counterparty": 0,
+        }),
+    )
+    .await;
+    assert_eq!(
+        status,
+        StatusCode::OK,
+        "the signing session should open: {body}"
+    );
+    for envelope in body["envelopes"].as_array().expect("envelopes") {
+        in_flight.push(from_wire(envelope));
+    }
+
+    let mut signature: Option<String> = None;
+
+    for _ in 0..4 {
+        let mut next: Vec<Envelope> = Vec::new();
+
+        let inbox: Vec<Envelope> = in_flight
+            .iter()
+            .filter(|e| e.from != PartyId(0) && e.to.is_none_or(|to| to == PartyId(0)))
+            .cloned()
+            .collect();
+        match extension.advance(&inbox).expect("the round should advance") {
+            SignProgress::Send(outgoing) => next.extend(outgoing),
+            SignProgress::Done(_) => {}
+        }
+
+        let for_server: Vec<Value> = in_flight
+            .iter()
+            .filter(|e| {
+                e.from != PartyId(SERVER_PARTY) && e.to.is_none_or(|to| to.0 == SERVER_PARTY)
+            })
+            .map(to_wire)
+            .collect();
+        let (status, body) = post(
+            &app,
+            "/v1/sign/round",
+            json!({
+                "wallet_id": "wallet-sign",
+                "sign_id": sign_hex,
+                "envelopes": for_server,
+            }),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "the round should advance: {body}");
+
+        match body["state"].as_str().expect("state") {
+            "inProgress" => {
+                for envelope in body["envelopes"].as_array().expect("envelopes") {
+                    next.push(from_wire(envelope));
+                }
+            }
+            "completed" => {
+                signature = Some(body["signature"].as_str().expect("signature").to_string());
+                break;
+            }
+            other => panic!("unknown state: {other}"),
+        }
+        in_flight = next;
+    }
+
+    let signature = signature.expect("signing should finish");
+    assert_eq!(signature.len(), 130, "a signature is 65 bytes as hex");
+
+    // The signature must verify against the wallet's public key.
+    let mut public_key = [0u8; 33];
+    for (i, slot) in public_key.iter_mut().enumerate() {
+        *slot = u8::from_str_radix(&public_key_hex[i * 2..i * 2 + 2], 16).expect("hex");
+    }
+    let mut raw = [0u8; 65];
+    for (i, slot) in raw.iter_mut().enumerate() {
+        *slot = u8::from_str_radix(&signature[i * 2..i * 2 + 2], 16).expect("hex");
+    }
+    let mut r = [0u8; 32];
+    let mut s = [0u8; 32];
+    r.copy_from_slice(&raw[..32]);
+    s.copy_from_slice(&raw[32..64]);
+
+    assert!(
+        mpc_core::verify(
+            &mpc_core::PublicKey(public_key),
+            &digest,
+            &mpc_core::Signature {
+                r,
+                s,
+                recovery_id: raw[64]
+            },
+        )
+        .expect("verification should run"),
+        "the signature should verify against the wallet public key"
+    );
+}
+
+#[tokio::test]
+async fn signing_rejects_an_unknown_wallet() {
+    let app = test_app().await;
+
+    let (status, _) = post(
+        &app,
+        "/v1/sign/session",
+        json!({
+            "wallet_id": "nobody",
+            "sign_id": "aa".repeat(32),
+            "digest": "bb".repeat(32),
+            "counterparty": 0,
+        }),
+    )
+    .await;
+
+    assert_eq!(status, StatusCode::NOT_FOUND);
 }
