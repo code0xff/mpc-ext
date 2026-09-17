@@ -58,6 +58,28 @@ jobs:
       - uses: jetli/wasm-pack-action@v0.4.0
       - run: wasm-pack build crates/mpc-wasm --target web
 
+  extension:
+    name: extension build + MV3 smoke
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
+      - uses: Swatinem/rust-cache@v2
+      - uses: jetli/wasm-pack-action@v0.4.0
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 22
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: make build-wasm
+      - run: pnpm -C packages/extension build
+      # Chrome 137+ 는 일반 Chrome에서 --load-extension을 무시한다.
+      - run: pnpm dlx @puppeteer/browsers install chrome@stable
+      - run: pnpm -C packages/extension smoke
+
   supply-chain:
     name: licenses, advisories, secrets
     runs-on: ubuntu-latest

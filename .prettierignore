@@ -3,3 +3,7 @@ dist/
 .output/
 pkg/
 pnpm-lock.yaml
+chrome/
+.wxt/
+packages/extension/wasm/
+packages/extension/public/
