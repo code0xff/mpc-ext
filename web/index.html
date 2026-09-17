@@ -271,7 +271,7 @@
 
   .stage {
     display: grid;
-    grid-template-columns: 1fr 1fr;
+    grid-template-columns: repeat(3, 1fr);
     gap: 1rem;
     align-items: stretch;
   }
@@ -647,6 +647,12 @@
     color: var(--ink-3);
   }
 
+  @media (max-width: 860px) {
+    .stage {
+      grid-template-columns: 1fr;
+    }
+  }
+
   @media (max-width: 720px) {
     .stage {
       grid-template-columns: 1fr;
@@ -675,8 +681,8 @@
     <p class="eyebrow">DSRV Labs · 오픈소스</p>
     <h1 class="title">mpc-ext<span>/</span>2-of-3</h1>
     <p class="lede">
-      키를 세 조각으로 나눠 보관하는 크롬 확장입니다. 두 조각은 확장이, 한 조각은 서버가 들고
-      있습니다. 평소에는 확장만으로 서명하고, 조각 하나를 잃으면 서버 조각으로 되살립니다.
+      키를 세 조각으로 나눠 서로 다른 세 곳에 하나씩 둡니다. 확장 하나, 사용자가 보관하는 복구 파일
+      하나, 서버 하나. 평소에는 확장과 서버가 함께 서명하므로 어느 한쪽이 털려도 서명할 수 없습니다.
     </p>
     <div class="meta-row">
       <span class="pill pill-warn"><span class="dot"></span>감사 전 · 실자산 사용 금지</span>
@@ -703,17 +709,20 @@
       <button class="tab" role="tab" id="tab-normal" aria-controls="stage" aria-selected="true">
         평시 서명
       </button>
-      <button class="tab" role="tab" id="tab-lost" aria-controls="stage" aria-selected="false">
-        셰어 하나 분실
+      <button class="tab" role="tab" id="tab-offline" aria-controls="stage" aria-selected="false">
+        서버 장애
       </button>
-      <button class="tab" role="tab" id="tab-refresh" aria-controls="stage" aria-selected="false">
-        복구 후 리프레시
+      <button class="tab" role="tab" id="tab-lost" aria-controls="stage" aria-selected="false">
+        기기 분실
+      </button>
+      <button class="tab" role="tab" id="tab-seized" aria-controls="stage" aria-selected="false">
+        확장 장악
       </button>
       <button class="tab" role="tab" id="tab-export" aria-controls="stage" aria-selected="false">
         키 추출
       </button>
       <button class="tab" role="tab" id="tab-device" aria-controls="stage" aria-selected="false">
-        기기 통째로 분실
+        기기 + 복구 파일 분실
       </button>
     </div>
 
@@ -721,16 +730,25 @@
       <div class="zone">
         <div class="zone-head">
           <strong>크롬 확장</strong>
-          <span class="mono">기기 · 암호화 저장소</span>
+          <span class="mono">기기</span>
         </div>
         <div class="shares">
           <div class="share" id="share-a" data-state="signing">
             <div class="key">A</div>
             <div class="role"><b>셰어 A</b><span id="role-a">서명 참여</span></div>
           </div>
-          <div class="share" id="share-b" data-state="signing">
+        </div>
+      </div>
+
+      <div class="zone">
+        <div class="zone-head">
+          <strong>복구 파일</strong>
+          <span class="mono">오프라인 보관</span>
+        </div>
+        <div class="shares">
+          <div class="share" id="share-b" data-state="held">
             <div class="key">B</div>
-            <div class="role"><b>셰어 B</b><span id="role-b">서명 참여</span></div>
+            <div class="role"><b>셰어 B</b><span id="role-b">대기 — 평시 미사용</span></div>
           </div>
         </div>
       </div>
@@ -741,9 +759,9 @@
           <span class="mono">자체 호스팅 가능</span>
         </div>
         <div class="shares">
-          <div class="share" id="share-c" data-state="held">
+          <div class="share" id="share-c" data-state="signing">
             <div class="key">C</div>
-            <div class="role"><b>셰어 C</b><span id="role-c">대기 — 평시 미사용</span></div>
+            <div class="role"><b>셰어 C</b><span id="role-c">서명 참여</span></div>
           </div>
         </div>
       </div>
@@ -751,12 +769,12 @@
 
     <div class="readout">
       <span class="count" id="readout-count">2 / 3</span>
-      <span class="verdict" id="readout-verdict">서명 가능 · 서버 통신 없음</span>
+      <span class="verdict" id="readout-verdict">서명 가능 · 확장과 서버가 함께</span>
     </div>
 
     <p class="scenario-note" id="scenario-note">
-      <b>평시 서명은 확장 안에서 끝납니다.</b> 서버가 꺼져 있어도 서명할 수 있고, 서버는 사용자가
-      무엇에 서명했는지 알지 못합니다.
+      <b>확장과 서버가 각각 셰어 하나씩으로 함께 서명합니다.</b> 서버는 보관소가 아니라 두 번째
+      요소입니다 — 확장이 장악되어도 서버가 거부하면 서명은 만들어지지 않습니다.
     </p>
   </div>
 </section>
@@ -765,22 +783,29 @@
   <div class="wrap">
     <div class="limits">
       <p class="eyebrow">정직한 고지</p>
-      <h3>이 설계가 주지 <em>않는</em> 것</h3>
-      <p>
-        셰어 A와 B는 같은 확장, 같은 저장소, 같은 비밀번호 아래 있습니다. 따라서
-        <b>잠금이 풀린 확장을 장악한 공격자는 두 셰어를 모두 얻습니다.</b> 그 시점의 도난 내성은
-        평범한 암호화 지갑과 다르지 않습니다.
-      </p>
-      <p>이 설계에서 MPC가 실제로 주는 것은 두 가지입니다.</p>
+      <h3>무엇을 내주었나</h3>
+      <p>셰어를 세 곳에 나눈 대가로 두 가지를 내줍니다. 숨기지 않고 적어둡니다.</p>
       <ul>
-        <li>셰어 하나를 잃었을 때의 <b>복구 경로</b> — 주소를 바꾸지 않고 되살립니다.</li>
-        <li>디스크에 완전한 키가 존재하지 않는다는 점 — 메모리 스크래핑의 난이도만 올라갑니다.</li>
+        <li>
+          <b>서버가 모든 서명에 관여합니다.</b> 서버는 사용자가 무엇에 서명하는지 보게 되고, 서버가
+          내려가면 복구 파일을 꺼내 A+B로 서명해야 합니다. 검열 가능성도 생깁니다.
+        </li>
+        <li>
+          <b>서명마다 네트워크 왕복이 필요합니다.</b> 계산은 16 ms지만 체감 지연은 왕복이
+          지배합니다.
+        </li>
       </ul>
-      <p>
-        "서버가 털려도 안전하다"는 참이지만, 뒤집으면 "확장이 털리면 서버가 있어도 소용없다"입니다.
-        평시 서명에서 서버를 뺐기 때문입니다. 셰어 B를 다른 신뢰 영역(패스키 · OS 키체인 · 별도
-        기기)으로 옮기는 것이 근본 해결책이고, 후속 과제로 등록되어 있습니다.
-      </p>
+      <p>그리고 사용자가 깨뜨릴 수 있는 전제가 둘 있습니다.</p>
+      <ul>
+        <li>
+          <b>복구 파일을 확장과 같은 기기에 두면</b> 셰어 두 개가 한곳에 모입니다. 그 기기가
+          장악되면 서명이 가능해지고, 이 설계의 이점이 사라집니다.
+        </li>
+        <li>
+          <b>복구 파일을 잃고 기기도 잃으면 복구할 수 없습니다.</b> 서버 셰어 하나만 남기
+          때문입니다.
+        </li>
+      </ul>
     </div>
   </div>
 </section>
@@ -1021,27 +1046,35 @@
   const SCENARIOS = {
     normal: {
       a: ['signing', '서명 참여'],
-      b: ['signing', '서명 참여'],
-      c: ['held', '대기 — 평시 미사용'],
+      b: ['held', '대기 — 평시 미사용'],
+      c: ['signing', '서명 참여'],
       count: '2 / 3',
-      verdict: '서명 가능 · 서버 통신 없음',
-      note: '<b>평시 서명은 확장 안에서 끝납니다.</b> 서버가 꺼져 있어도 서명할 수 있고, 서버는 사용자가 무엇에 서명했는지 알지 못합니다.',
+      verdict: '서명 가능 · 확장과 서버가 함께',
+      note: '<b>확장과 서버가 각각 셰어 하나씩으로 함께 서명합니다.</b> 서버는 보관소가 아니라 두 번째 요소입니다 — 확장이 장악되어도 서버가 거부하면 서명은 만들어지지 않습니다.',
+    },
+    offline: {
+      a: ['signing', '서명 참여'],
+      b: ['signing', '복구 파일을 불러와 참여'],
+      c: ['lost', '도달 불가'],
+      count: '2 / 3',
+      verdict: '서명 가능 · 서버 없이',
+      note: '<b>서비스가 사라져도 자산은 잠기지 않습니다.</b> 서버에 닿지 못하면 확장이 복구 파일을 요구하는 비상 경로를 제시합니다. "키를 인질로 잡지 않는다"는 약속이 실제로 성립하는 지점입니다.',
     },
     lost: {
-      a: ['lost', '분실 — 사용 불가'],
-      b: ['signing', '서명 참여'],
+      a: ['lost', '기기와 함께 분실'],
+      b: ['signing', '복구 파일로 참여'],
       c: ['signing', '복구 모드로 참여'],
       count: '2 / 3',
-      verdict: '서명 가능 · 서버가 복구 모드로 참여',
-      note: '<b>남은 셰어와 서버 셰어로 계속 서명할 수 있습니다.</b> 서버는 사용자 인증과 지연 기간을 거친 뒤에만 참여하고, 복구가 시작되면 등록된 채널로 알림이 갑니다.',
+      verdict: '복구 가능 · 주소 유지',
+      note: '<b>새 기기에 복구 파일을 넣으면 됩니다.</b> 서버는 사용자 인증과 지연 기간을 거친 뒤 참여합니다. 이어서 새 셰어를 발급하고 새 복구 파일을 내보내며, 공개키는 그대로라 주소가 바뀌지 않습니다.',
     },
-    refresh: {
-      a: ['new', '새 셰어 — 새 기기'],
-      b: ['new', '새 셰어 — 재생성'],
-      c: ['new', '새 셰어 — 재생성'],
-      count: '3 / 3',
-      verdict: '2-of-3 복원 · 공개키(주소) 유지',
-      note: '<b>복구 직후 키 리프레시를 실행합니다.</b> 공개키는 그대로 두고 셰어만 새로 만들기 때문에 주소가 바뀌지 않고, 분실한 옛 셰어는 그 순간 무효가 됩니다.',
+    seized: {
+      a: ['lost', '공격자가 탈취'],
+      b: ['held', '다른 곳에 보관 — 안전'],
+      c: ['held', '서버가 거부'],
+      count: '1 / 3',
+      verdict: '서명 불가 · 공격자는 셰어 하나뿐',
+      note: '<b>확장을 통째로 장악해도 서명은 만들어지지 않습니다.</b> 셰어가 하나뿐이기 때문입니다. 서버는 rate limit과 이상 징후 차단으로 두 번째 요소 역할을 합니다. 다만 <b>복구 파일을 같은 기기에 두었다면</b> 이 방어가 무너집니다.',
     },
     export: {
       a: ['signing', '추출에 참여'],
@@ -1049,15 +1082,15 @@
       c: ['held', '관여하지 않음'],
       count: '2 / 3',
       verdict: '완전한 개인키 복원 · 오프라인',
-      note: '<b>사용자는 언제든 키를 꺼낼 수 있습니다.</b> 셰어 두 개를 합쳐 표준 포맷의 개인키를 복원하며, 서버 없이 완전히 오프라인으로 동작합니다. 다만 이 순간 MPC의 이점은 사라지므로 확장이 강하게 경고합니다.',
+      note: '<b>사용자는 언제든 키를 꺼낼 수 있습니다.</b> 두 셰어를 합쳐 표준 포맷의 개인키를 복원하며, 서버 없이 오프라인으로 동작합니다. 이 순간 MPC의 이점은 사라지므로 확장이 강하게 경고합니다.',
     },
     device: {
-      a: ['lost', '분실 — 기기와 함께'],
-      b: ['lost', '분실 — 기기와 함께'],
+      a: ['lost', '기기와 함께 분실'],
+      b: ['lost', '복구 파일 분실'],
       c: ['held', '홀로 남음 — 서명 불가'],
       count: '1 / 3',
-      verdict: '서명 불가 · 사전 export가 없으면 복구 불가',
-      note: '<b>서버 셰어 하나로는 아무것도 할 수 없습니다.</b> 이 경우의 유일한 대비책은 미리 내보내 둔 셰어 export이고, 잃은 뒤에는 만들 수 없습니다. 그래서 온보딩에서 export를 유도하고, 하지 않은 상태를 계속 경고합니다.',
+      verdict: '복구 불가',
+      note: '<b>복구 파일을 잃고 기기도 잃으면 되돌릴 방법이 없습니다.</b> 서버 셰어 하나로는 아무것도 할 수 없습니다. 그래서 복구 파일 내보내기는 온보딩에서 건너뛸 수 없고, 확장과 다른 곳에 보관하도록 안내합니다.',
     },
   };
 

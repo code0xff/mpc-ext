@@ -52,7 +52,7 @@
 
 ## 후속 과제 (Deferred)
 
-- **셰어 B를 별도 신뢰 영역으로 분리** (passkey PRF / OS 키체인 / 별도 기기) — 현재 설계에서 MPC가 도난 내성을 주지 못하는 한계의 근본 해결책 (`security.md`)
+- 서버 없이도 두 요소를 유지하는 배치 (passkey PRF / OS 키체인을 셰어 보관처로) — 프라이버시를 지키면서 2요소를 얻는 대안 ([adr/0005](adr/0005-share-placement.md))
 - 생체인증 잠금 해제 (WebAuthn / passkey PRF) — 초기 범위에서 제외
 - `LFDT-Lockness/dkls` 추적 — 감사받은 permissive DKLs23 구현이 나오면 ADR-0004 재검토
 - 주기적 자동 키 리프레시
