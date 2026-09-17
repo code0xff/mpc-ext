@@ -2,46 +2,13 @@
 // Types for the #import virtual module
 declare module '#imports' {
   export { browser, Browser } from 'wxt/browser';
-  export {
-    storage,
-    WxtStorage,
-    WxtStorageItem,
-    StorageArea,
-    StorageItemKey,
-    StorageAreaChanges,
-    MigrationError,
-  } from 'wxt/utils/storage';
+  export { storage, WxtStorage, WxtStorageItem, StorageArea, StorageItemKey, StorageAreaChanges, MigrationError } from 'wxt/utils/storage';
   export { getAppConfig, useAppConfig } from 'wxt/utils/app-config';
   export { ContentScriptContext, WxtWindowEventMap } from 'wxt/utils/content-script-context';
-  export {
-    createIframeUi,
-    IframeContentScriptUi,
-    IframeContentScriptUiOptions,
-  } from 'wxt/utils/content-script-ui/iframe';
-  export {
-    createIntegratedUi,
-    IntegratedContentScriptUi,
-    IntegratedContentScriptUiOptions,
-  } from 'wxt/utils/content-script-ui/integrated';
-  export {
-    createShadowRootUi,
-    ShadowRootContentScriptUi,
-    ShadowRootContentScriptUiOptions,
-  } from 'wxt/utils/content-script-ui/shadow-root';
-  export {
-    ContentScriptUi,
-    ContentScriptUiOptions,
-    ContentScriptOverlayAlignment,
-    ContentScriptAppendMode,
-    ContentScriptInlinePositioningOptions,
-    ContentScriptOverlayPositioningOptions,
-    ContentScriptModalPositioningOptions,
-    ContentScriptPositioningOptions,
-    ContentScriptAnchoredOptions,
-    AutoMountOptions,
-    StopAutoMount,
-    AutoMount,
-  } from 'wxt/utils/content-script-ui/types';
+  export { createIframeUi, IframeContentScriptUi, IframeContentScriptUiOptions } from 'wxt/utils/content-script-ui/iframe';
+  export { createIntegratedUi, IntegratedContentScriptUi, IntegratedContentScriptUiOptions } from 'wxt/utils/content-script-ui/integrated';
+  export { createShadowRootUi, ShadowRootContentScriptUi, ShadowRootContentScriptUiOptions } from 'wxt/utils/content-script-ui/shadow-root';
+  export { ContentScriptUi, ContentScriptUiOptions, ContentScriptOverlayAlignment, ContentScriptAppendMode, ContentScriptInlinePositioningOptions, ContentScriptOverlayPositioningOptions, ContentScriptModalPositioningOptions, ContentScriptPositioningOptions, ContentScriptAnchoredOptions, AutoMountOptions, StopAutoMount, AutoMount } from 'wxt/utils/content-script-ui/types';
   export { defineAppConfig, WxtAppConfig } from 'wxt/utils/define-app-config';
   export { defineBackground } from 'wxt/utils/define-background';
   export { defineContentScript } from 'wxt/utils/define-content-script';

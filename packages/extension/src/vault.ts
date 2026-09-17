@@ -25,7 +25,14 @@ interface VaultRecord {
 }
 
 function toB64(bytes: Uint8Array): string {
-  return btoa(String.fromCharCode(...bytes));
+  // 셰어는 100 KB를 넘는다. String.fromCharCode(...bytes)로 한 번에 펼치면
+  // 인자 개수가 스택 한계를 넘어 터진다. 조각내서 이어붙인다.
+  const CHUNK = 0x8000;
+  let out = '';
+  for (let i = 0; i < bytes.length; i += CHUNK) {
+    out += String.fromCharCode(...bytes.subarray(i, i + CHUNK));
+  }
+  return btoa(out);
 }
 
 function fromB64(value: string): Uint8Array {

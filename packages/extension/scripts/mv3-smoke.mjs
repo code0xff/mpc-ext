@@ -94,21 +94,58 @@ try {
           else resolve(response);
         }),
       );
+    const expect = async (request, what) => {
+      const response = await send(request);
+      if (!response.ok) throw new Error(`${what}: ${response.error}`);
+      return response.value;
+    };
 
-    const health = await send({ type: 'wasmHealth' });
-    if (!health.ok) throw new Error(`wasm 로드 실패: ${health.error}`);
+    const health = await expect({ type: 'wasmHealth' }, 'wasm 로드');
+
+    const before = await expect({ type: 'status' }, '초기 상태');
+    if (before.kind !== 'uninitialized') throw new Error(`초기 상태가 다릅니다: ${before.kind}`);
 
     const started = performance.now();
-    const created = await send({ type: 'createKey' });
-    if (!created.ok) throw new Error(`DKG 실패: ${created.error}`);
+    const created = await expect({ type: 'createKey', password: 'correct horse' }, 'DKG');
     const dkgMs = Math.round(performance.now() - started);
 
+    // 복구 파일을 저장하기 전에는 아무것도 저장되지 않아야 한다 (원자적 온보딩).
+    const midway = await expect({ type: 'status' }, '중간 상태');
+    if (midway.kind !== 'awaitingRecoveryExport') {
+      throw new Error(`복구 파일 대기 상태여야 합니다: ${midway.kind}`);
+    }
+    const storedMidway = await chrome.storage.local.get('vault');
+    if (storedMidway.vault) throw new Error('복구 파일 저장 전에 셰어가 저장되었습니다');
+
+    const confirmed = await expect({ type: 'confirmRecoverySaved' }, '복구 파일 확인');
+    if (confirmed.kind !== 'unlocked') throw new Error(`열린 상태여야 합니다: ${confirmed.kind}`);
+
+    // 잠금 → 틀린 비밀번호 거부 → 올바른 비밀번호로 해제.
+    const locked = await expect({ type: 'lock' }, '잠금');
+    if (locked.kind !== 'locked') throw new Error(`잠긴 상태여야 합니다: ${locked.kind}`);
+
+    const wrong = await send({ type: 'unlock', password: 'wrong horse' });
+    if (wrong.ok) throw new Error('틀린 비밀번호가 통과했습니다');
+
+    const unlocked = await expect({ type: 'unlock', password: 'correct horse' }, '잠금 해제');
+    if (unlocked.kind !== 'unlocked') throw new Error(`열린 상태여야 합니다: ${unlocked.kind}`);
+    if (unlocked.publicKeyHex !== created.publicKeyHex) {
+      throw new Error('해제 후 공개키가 달라졌습니다');
+    }
+
+    // 저장소에 평문 셰어가 남지 않아야 한다.
+    const stored = await chrome.storage.local.get('vault');
+    const serialized = JSON.stringify(stored);
+    if (serialized.includes(created.recoveryShareHex.slice(0, 64))) {
+      throw new Error('저장소에 평문 셰어가 남아 있습니다');
+    }
+
     return {
-      config: health.value.config,
-      loadMs: health.value.loadMs,
+      config: health.config,
+      loadMs: health.loadMs,
       dkgMs,
-      publicKey: created.value.publicKeyHex,
-      recoveryShareBytes: created.value.recoveryShareHex.length / 2,
+      publicKey: created.publicKeyHex,
+      recoveryShareBytes: created.recoveryShareHex.length / 2,
     };
   });
 
@@ -121,7 +158,7 @@ try {
 
   if (result.config !== '2-of-3') throw new Error(`임계 설정이 다릅니다: ${result.config}`);
   if (result.publicKey.length !== 66) throw new Error('공개키 길이가 33바이트가 아닙니다');
-  console.log('\n통과: MV3 서비스 워커에서 wasm DKG가 동작합니다.');
+  console.log('\n통과: MV3 서비스 워커에서 DKG · 원자적 온보딩 · 잠금/해제가 모두 동작합니다.');
 } catch (error) {
   failed = true;
   console.error('\n실패:', error.message);

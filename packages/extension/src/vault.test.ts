@@ -69,3 +69,19 @@ describe('vault', () => {
     expect(await vault.publicKeyHex()).toBe(PUBLIC_KEY);
   });
 });
+
+describe('vault — 실제 셰어 크기', () => {
+  beforeEach(() => storage.clear());
+
+  it('100 KB가 넘는 셰어를 다룬다', async () => {
+    // 실제 DKLs23 셰어는 약 114 KB다. 작은 픽스처만 테스트하면
+    // base64 변환의 스택 한계를 놓친다 (실제로 한 번 놓쳤다).
+    // getRandomValues는 한 번에 65,536바이트까지만 채운다. 내용의 무작위성은
+    // 이 테스트의 관심사가 아니므로 결정적인 패턴을 쓴다.
+    const large = Uint8Array.from({ length: 120_000 }, (_, i) => (i * 31) % 256);
+
+    await vault.store('correct horse', large, PUBLIC_KEY);
+
+    expect(await vault.unlock('correct horse')).toEqual(large);
+  });
+});
