@@ -444,6 +444,63 @@
     color: var(--ink-2);
   }
 
+  /* ---- measurements ---- */
+  .measures {
+    width: 100%;
+    border-collapse: collapse;
+    background: var(--surface);
+    border: 1px solid var(--rule);
+    border-radius: 10px;
+    overflow: hidden;
+    font-family: var(--f-sans);
+    font-size: var(--s--1);
+  }
+
+  .measures th,
+  .measures td {
+    padding: 0.7rem 1rem;
+    text-align: right;
+    border-bottom: 1px solid var(--rule);
+  }
+
+  .measures th:first-child,
+  .measures td:first-child {
+    text-align: left;
+  }
+
+  .measures thead th {
+    font-family: var(--f-mono);
+    font-size: var(--s--1);
+    font-weight: 500;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+    color: var(--ink-3);
+    background: var(--sunken);
+  }
+
+  .measures tbody tr:last-child td {
+    border-bottom: 0;
+  }
+
+  .measures .num {
+    font-family: var(--f-mono);
+    font-variant-numeric: tabular-nums;
+  }
+
+  .measures .pass {
+    color: var(--ok);
+    font-weight: 600;
+  }
+
+  .measures .hi {
+    font-weight: 600;
+    color: var(--ink);
+  }
+
+  .table-scroll {
+    overflow-x: auto;
+  }
+
   /* ---- phases ---- */
   .phases {
     display: flex;
@@ -728,6 +785,62 @@
   </div>
 </section>
 
+<section id="measured">
+  <div class="wrap">
+    <div class="sec-head">
+      <p class="eyebrow">실측</p>
+      <h2>브라우저에서 쓸 만한가</h2>
+      <p>
+        라이브러리를 고르기 전에 정한 기준을 실제 구현으로 확인했습니다. 5회 평균이며, wasm 수치는
+        V8에서 세 파티를 한 스레드로 모두 돌린 값입니다.
+      </p>
+    </div>
+
+    <div class="table-scroll">
+      <table class="measures">
+        <thead>
+          <tr>
+            <th scope="col">동작</th>
+            <th scope="col">네이티브</th>
+            <th scope="col">wasm (V8)</th>
+            <th scope="col">기준</th>
+            <th scope="col">결과</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td>서명 (2파티)</td>
+            <td class="num">4.4 ms</td>
+            <td class="num hi">16 ms</td>
+            <td class="num">1 s</td>
+            <td class="pass">통과</td>
+          </tr>
+          <tr>
+            <td>DKG (3파티)</td>
+            <td class="num">833 ms</td>
+            <td class="num hi">4,920 ms</td>
+            <td class="num">10 s</td>
+            <td class="pass">통과</td>
+          </tr>
+          <tr>
+            <td>키 리프레시 (3파티)</td>
+            <td class="num">834 ms</td>
+            <td class="num hi">4,868 ms</td>
+            <td class="num">30 s</td>
+            <td class="pass">통과</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+
+    <p class="scenario-note">
+      <b>평시 서명 16 ms.</b> 매일 쓰는 경로에서는 지연이 느껴지지 않습니다. 키 생성과 리프레시는
+      5초 가까이 걸리지만 둘 다 드물게 일어나는 작업입니다. wasm 번들은 최적화 후 459 KB (gzip 174
+      KB) 입니다.
+    </p>
+  </div>
+</section>
+
 <section id="progress">
   <div class="wrap">
     <div class="sec-head">
@@ -756,8 +869,9 @@
         <div class="body">
           <strong>MPC 코어</strong>
           <span
-            >DKG · 서명 · 리프레시 구현, 3파티 통합 테스트와 악성 메시지 테스트, 브라우저 실측(서명
-            1초 · DKG 10초 · 리프레시 30초 목표), 감사 범위 확정</span
+            >DKG · 서명 · 리프레시 구현 완료, 통합 테스트 통과(임의의 2셰어 조합 서명, 리프레시 후
+            공개키 유지와 옛 셰어 무효화), 브라우저 실측 완료. 남은 것은 악성 메시지 테스트와 감사
+            범위 확정</span
           >
         </div>
         <div class="status">진행 중</div>
@@ -847,8 +961,26 @@
         <div class="what">MPC 라이브러리 재선정 — 0xCarbon/DKLs23</div>
         <div class="why">
           키 리프레시를 지원하는 유일한 permissive 후보입니다. 리프레시가 없으면 복구가 주소 변경을
-          동반한 이전이 됩니다. 감사 이력이 없어 자체 감사 비용을 부담하고, 고정 커밋 vendoring과
-          트레이트 추상화로 교체 가능성을 유지합니다.
+          동반한 이전이 됩니다. 감사 이력이 없어 자체 감사 비용을 부담하고, 버전 고정과 추상화
+          계층으로 교체 가능성을 유지합니다. 구현 후 실측에서 모든 기준을 통과했습니다.
+        </div>
+      </div>
+      <div class="decision">
+        <div class="id">발견 · Phase 1</div>
+        <div class="what">리프레시는 기존 파티 전원을 요구한다</div>
+        <div class="why">
+          셰어를 잃은 자리를 새 기기로 채우는 것은 리프레시가 아니라 리셰어인데, 업스트림에 해당
+          프로토콜이 없습니다. 현재 계획은 사용자 기기에서 키를 복원해 즉시 다시 나누는 것이며, 이
+          순간 개인키가 잠깐 한 곳에 존재합니다. 서버는 이 과정을 보지 않고, 사용자에게 고지합니다.
+        </div>
+      </div>
+      <div class="decision">
+        <div class="id">발견 · Phase 1</div>
+        <div class="what">업스트림이 현재 stable 의존성에서 빌드되지 않는다</div>
+        <div class="why">
+          채택한 라이브러리는 RustCrypto pre-release에 맞춰 발행되었는데 그 뒤 stable이 나왔습니다.
+          해당 버전을 고정해 해결했고, 업스트림에 보고할 예정입니다. 감사와 유지보수 비용을 우리가
+          진다는 판단이 실제로 맞았다는 첫 사례입니다.
         </div>
       </div>
     </div>
