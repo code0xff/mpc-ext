@@ -16,16 +16,17 @@ ADR-0001이 라이선스 문제로 폐기되어 permissive 라이선스 후보�
 
 ## 조사 결과 (2026-09-16 기준)
 
-| | 라이선스 | 키 리프레시 | 감사 | 유지보수 | 브라우저 성능 |
-|---|---|---|---|---|---|
-| `silence-laboratories/dkls23` | ❌ SLL (비오픈소스) | ✅ | ✅ Trail of Bits 2024-02 | 양호 | ✅ |
-| `0xCarbon/DKLs23` | ✅ Apache-2.0 / MIT | ✅ `refresh.rs`, `re_key.rs` | ❌ | ⚠️ 사실상 1인 | ✅ |
-| `LFDT-Lockness/cggmp21`(→`cggmp24`) | ✅ MIT / Apache-2.0 | ❌ **미지원** | ✅ Kudelski (범위 미확인) | ✅ LFDT 거버넌스 | ❌ safe prime 생성 |
-| `LFDT-Lockness/dkls` | ✅ | — | ❌ | **코드 없음** (2026-08 생성) | — |
+|                                     | 라이선스            | 키 리프레시                  | 감사                      | 유지보수                     | 브라우저 성능      |
+| ----------------------------------- | ------------------- | ---------------------------- | ------------------------- | ---------------------------- | ------------------ |
+| `silence-laboratories/dkls23`       | ❌ SLL (비오픈소스) | ✅                           | ✅ Trail of Bits 2024-02  | 양호                         | ✅                 |
+| `0xCarbon/DKLs23`                   | ✅ Apache-2.0 / MIT | ✅ `refresh.rs`, `re_key.rs` | ❌                        | ⚠️ 사실상 1인                | ✅                 |
+| `LFDT-Lockness/cggmp21`(→`cggmp24`) | ✅ MIT / Apache-2.0 | ❌ **미지원**                | ✅ Kudelski (범위 미확인) | ✅ LFDT 거버넌스             | ❌ safe prime 생성 |
+| `LFDT-Lockness/dkls`                | ✅                  | —                            | ❌                        | **코드 없음** (2026-08 생성) | —                  |
 
 각 후보가 서로 다른 필수 요건에서 하나씩 탈락한다. 깨끗한 선택지는 없다.
 
 `cggmp24` 추가 확인 사항:
+
 - README 명시: "does not (currently) support: Key refresh for both threshold and non-threshold keys".
 - 상수 시간 연산을 의도적으로 하지 않는다("timing attacks out of scope"). 브라우저 확장의 위협 모델과 맞지 않는다.
 - wasm은 `num-bigint` 백엔드만 가능하고, 빠른 `rug` 백엔드는 LGPL이라 채택할 수 없다.

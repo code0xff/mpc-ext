@@ -1,0 +1,10 @@
+packages:
+  - packages/*
+
+# pnpm은 의존성의 postinstall 스크립트를 기본 차단한다 (공급망 방어).
+# 실행이 필요한 것만 명시적으로 허용한다. 추가 시 PR에서 사유를 남긴다.
+#   esbuild  — vitest가 사용하는 번들러. 플랫폼 바이너리 설치에 필요하다.
+#   lefthook — git 훅 바이너리 설치에 필요하다.
+allowBuilds:
+  esbuild: true
+  lefthook: true

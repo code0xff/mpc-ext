@@ -1,0 +1,18 @@
+# cargo-deny: 라이선스와 취약점 게이트. AGENTS.md의 오픈소스 원칙을 기계적으로 강제한다.
+[licenses]
+version = 2
+# copyleft(GPL/AGPL/LGPL)는 도입하지 않는다 — 허용 목록에 없으면 실패한다.
+allow = ["Apache-2.0", "MIT", "BSD-2-Clause", "BSD-3-Clause", "ISC", "Unicode-3.0", "Zlib"]
+confidence-threshold = 0.9
+
+[advisories]
+version = 2
+yanked = "deny"
+
+[bans]
+multiple-versions = "warn"
+wildcards = "deny"
+
+[sources]
+unknown-registry = "deny"
+unknown-git = "deny"

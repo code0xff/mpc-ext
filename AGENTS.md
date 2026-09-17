@@ -21,12 +21,12 @@
 
 ## 3. 기술 스택 (변경은 ADR 필요)
 
-| 영역 | 선택 |
-|---|---|
-| MPC | DKLs23 — `0xCarbon/DKLs23` (Apache-2.0/MIT) 기반 Rust, vendoring |
-| 확장 | TypeScript + React + Vite + WXT (Manifest V3) |
-| 서버 | Rust + axum + SQLite(sqlx), OpenAPI/Swagger UI |
-| 워크스페이스 | pnpm workspace (JS) + cargo workspace (Rust) |
+| 영역         | 선택                                                             |
+| ------------ | ---------------------------------------------------------------- |
+| MPC          | DKLs23 — `0xCarbon/DKLs23` (Apache-2.0/MIT) 기반 Rust, vendoring |
+| 확장         | TypeScript + React + Vite + WXT (Manifest V3)                    |
+| 서버         | Rust + axum + SQLite(sqlx), OpenAPI/Swagger UI                   |
+| 워크스페이스 | pnpm workspace (JS) + cargo workspace (Rust)                     |
 
 ## 4. 보안 원칙 (타협 불가)
 

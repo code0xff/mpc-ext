@@ -1,0 +1,7 @@
+# 시크릿 스캔 설정. 실제 키·시크릿은 저장소에 커밋하지 않는다 (AGENTS.md).
+[extend]
+useDefault = true
+
+[[allowlist]]
+description = "문서의 더미값과 예시"
+paths = ['''docs/.*\.md''', '''README\.md''', '''web/.*''']

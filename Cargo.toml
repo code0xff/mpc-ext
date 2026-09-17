@@ -1,0 +1,26 @@
+[workspace]
+resolver = "2"
+members = ["crates/mpc-core", "crates/mpc-wasm", "crates/mpc-server"]
+
+[workspace.package]
+version = "0.0.1"
+edition = "2021"
+rust-version = "1.90"
+license = "Apache-2.0"
+repository = "https://github.com/dsrvlabs/mpc-ext"
+
+[workspace.dependencies]
+mpc-core = { path = "crates/mpc-core" }
+serde = { version = "1", features = ["derive"] }
+thiserror = "2"
+zeroize = { version = "1", features = ["derive"] }
+
+[workspace.lints.rust]
+unsafe_code = "forbid"
+missing_debug_implementations = "warn"
+
+[workspace.lints.clippy]
+todo = "warn"
+unwrap_used = "warn"
+expect_used = "warn"
+panic = "warn"

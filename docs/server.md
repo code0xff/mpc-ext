@@ -20,12 +20,12 @@ SQLite 파일 하나. 외부 의존성 없이 자체 호스팅이 가능하고, 
 
 테이블 개요:
 
-| 테이블 | 내용 |
-|---|---|
-| `key_shares` | 셰어 C의 **암호문** BLOB, 공개키, `format_version`, 생성/리프레시 시각 |
-| `dkg_sessions` | 진행 중 DKG 세션 상태, 만료 시각 |
-| `recovery_requests` | 복구 요청, 지연 기간 만료 시각, 상태 |
-| `audit_log` | append-only 감사 로그 |
+| 테이블              | 내용                                                                   |
+| ------------------- | ---------------------------------------------------------------------- |
+| `key_shares`        | 셰어 C의 **암호문** BLOB, 공개키, `format_version`, 생성/리프레시 시각 |
+| `dkg_sessions`      | 진행 중 DKG 세션 상태, 만료 시각                                       |
+| `recovery_requests` | 복구 요청, 지연 기간 만료 시각, 상태                                   |
+| `audit_log`         | append-only 감사 로그                                                  |
 
 규칙:
 
@@ -37,13 +37,13 @@ SQLite 파일 하나. 외부 의존성 없이 자체 호스팅이 가능하고, 
 
 ## API (개요)
 
-| 엔드포인트 | 용도 |
-|---|---|
-| `POST /v1/dkg/session` | DKG 세션 개시 |
-| `POST /v1/dkg/round` | DKG 라운드 메시지 교환 |
+| 엔드포인트                  | 용도                       |
+| --------------------------- | -------------------------- |
+| `POST /v1/dkg/session`      | DKG 세션 개시              |
+| `POST /v1/dkg/round`        | DKG 라운드 메시지 교환     |
 | `POST /v1/recovery/request` | 복구 개시 (지연 기간 시작) |
-| `POST /v1/recovery/sign` | 복구 모드 서명 참여 |
-| `GET  /v1/health` | 헬스체크 |
+| `POST /v1/recovery/sign`    | 복구 모드 서명 참여        |
+| `GET  /v1/health`           | 헬스체크                   |
 
 - `GET /docs` — Swagger UI, `GET /openapi.json` — 스펙.
 - 스펙은 코드에서 생성하며, 생성된 `openapi.json`을 저장소에 커밋해 변경을 리뷰에서 보이게 한다.

@@ -1,0 +1,16 @@
+[package]
+name = "mpc-core"
+description = "2-of-3 임계 ECDSA 프로토콜 코어. 확장(wasm)과 서버가 공유하는 단일 진실 공급원."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+serde.workspace = true
+thiserror.workspace = true
+zeroize.workspace = true
+
+[lints]
+workspace = true

@@ -1,0 +1,18 @@
+# git 훅. 설치: pnpm exec lefthook install (make setup이 대신 해준다)
+pre-commit:
+  parallel: true
+  commands:
+    fmt:
+      glob: '*.{rs,ts,tsx,js,json,md,yml,yaml}'
+      run: make fmt-check
+    lint:
+      glob: '*.{rs,ts,tsx}'
+      run: make lint
+    secrets:
+      run: gitleaks protect --staged --redact --no-banner
+      skip: true # gitleaks 미설치 환경에서 커밋을 막지 않는다. CI에서는 항상 실행된다.
+
+pre-push:
+  commands:
+    test:
+      run: make test

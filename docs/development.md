@@ -17,13 +17,13 @@ pnpm workspace + cargo workspace를 루트에 둔다.
 
 ## 명령
 
-| 명령 | 내용 |
-|---|---|
-| `make setup` | 의존성 설치, 훅 설치 |
-| `make build` | wasm 빌드 → 확장 빌드 → 서버 빌드 |
-| `make test` | cargo test + vitest |
-| `make lint` | clippy + eslint |
-| `make fmt` | rustfmt + prettier |
+| 명령         | 내용                                                 |
+| ------------ | ---------------------------------------------------- |
+| `make setup` | 의존성 설치, 훅 설치                                 |
+| `make build` | wasm 빌드 → 확장 빌드 → 서버 빌드                    |
+| `make test`  | cargo test + vitest                                  |
+| `make lint`  | clippy + eslint                                      |
+| `make fmt`   | rustfmt + prettier                                   |
 | `make check` | fmt 검사 + lint + typecheck + test (**커밋 게이트**) |
 
 ## 품질 도구

@@ -1,0 +1,14 @@
+version: 2
+updates:
+  - package-ecosystem: cargo
+    directory: /
+    schedule: { interval: weekly }
+    # vendoring한 MPC crate는 자동 업데이트하지 않는다 (ADR-0004 완화책 1).
+    ignore:
+      - dependency-name: dkls23-*
+  - package-ecosystem: npm
+    directory: /
+    schedule: { interval: weekly }
+  - package-ecosystem: github-actions
+    directory: /
+    schedule: { interval: weekly }

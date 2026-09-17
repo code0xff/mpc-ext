@@ -1,0 +1,16 @@
+{
+  "name": "@mpc-ext/sdk",
+  "version": "0.0.1",
+  "description": "웹페이지가 mpc-ext 확장에 연결하기 위한 얇은 래퍼",
+  "license": "Apache-2.0",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "tsc --build",
+    "test": "vitest run"
+  }
+}
