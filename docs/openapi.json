@@ -1,0 +1,263 @@
+{
+  "openapi": "3.1.0",
+  "info": {
+    "title": "mpc-ext server",
+    "description": "Holds one share of a 2-of-3 MPC key and joins signing. Authentication is not designed yet.",
+    "license": {
+      "name": "Apache-2.0",
+      "identifier": "Apache-2.0"
+    },
+    "version": "0.0.1"
+  },
+  "paths": {
+    "/v1/dkg/round": {
+      "post": {
+        "tags": [],
+        "summary": "Advances to the next round using the envelopes supplied.",
+        "operationId": "advance_dkg",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AdvanceDkg"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "round advanced, or DKG complete",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AdvancedDkg"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "unknown or expired session"
+          }
+        }
+      }
+    },
+    "/v1/dkg/session": {
+      "post": {
+        "tags": [],
+        "summary": "Opens a DKG session and returns the server's round 1 envelopes.",
+        "operationId": "start_dkg",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/StartDkg"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "session opened",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StartedDkg"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "malformed request"
+          }
+        }
+      }
+    },
+    "/v1/health": {
+      "get": {
+        "tags": [],
+        "summary": "Returns the server's status.",
+        "operationId": "health",
+        "responses": {
+          "200": {
+            "description": "the server is healthy",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Health"
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+  "components": {
+    "schemas": {
+      "AdvanceDkg": {
+        "type": "object",
+        "description": "A request to advance a DKG round.",
+        "required": [
+          "session_id",
+          "wallet_id",
+          "envelopes"
+        ],
+        "properties": {
+          "envelopes": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/WireEnvelope"
+            },
+            "description": "The envelopes being delivered to the server."
+          },
+          "session_id": {
+            "type": "string",
+            "description": "The session id, 64 hex characters."
+          },
+          "wallet_id": {
+            "type": "string",
+            "description": "The wallet identifier."
+          }
+        }
+      },
+      "AdvancedDkg": {
+        "oneOf": [
+          {
+            "type": "object",
+            "description": "Still running. Deliver the envelopes and call again.",
+            "required": [
+              "envelopes",
+              "state"
+            ],
+            "properties": {
+              "envelopes": {
+                "type": "array",
+                "items": {
+                  "$ref": "#/components/schemas/WireEnvelope"
+                },
+                "description": "The envelopes the server sends."
+              },
+              "state": {
+                "type": "string",
+                "enum": [
+                  "inProgress"
+                ]
+              }
+            }
+          },
+          {
+            "type": "object",
+            "description": "The DKG finished and the server stored share C.",
+            "required": [
+              "public_key",
+              "state"
+            ],
+            "properties": {
+              "public_key": {
+                "type": "string",
+                "description": "The SEC1 compressed public key, hex-encoded."
+              },
+              "state": {
+                "type": "string",
+                "enum": [
+                  "completed"
+                ]
+              }
+            }
+          }
+        ],
+        "description": "The response to advancing a DKG round."
+      },
+      "Health": {
+        "type": "object",
+        "description": "The health-check response.",
+        "required": [
+          "status",
+          "threshold"
+        ],
+        "properties": {
+          "status": {
+            "type": "string",
+            "description": "Always `\"ok\"`."
+          },
+          "threshold": {
+            "type": "string",
+            "description": "This build's threshold configuration, for example `\"2-of-3\"`."
+          }
+        }
+      },
+      "StartDkg": {
+        "type": "object",
+        "description": "A request to open a DKG session.",
+        "required": [
+          "wallet_id",
+          "session_id"
+        ],
+        "properties": {
+          "session_id": {
+            "type": "string",
+            "description": "The session id shared by every party, 64 hex characters."
+          },
+          "wallet_id": {
+            "type": "string",
+            "description": "The wallet identifier, generated by the client."
+          }
+        }
+      },
+      "StartedDkg": {
+        "type": "object",
+        "description": "The response to opening a DKG session.",
+        "required": [
+          "envelopes"
+        ],
+        "properties": {
+          "envelopes": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/WireEnvelope"
+            },
+            "description": "The round 1 envelopes the server sends."
+          }
+        }
+      },
+      "WireEnvelope": {
+        "type": "object",
+        "description": "A single envelope. The body travels base64-encoded.",
+        "required": [
+          "round",
+          "from",
+          "payload"
+        ],
+        "properties": {
+          "from": {
+            "type": "integer",
+            "format": "int32",
+            "description": "The sending party, 0-based.",
+            "minimum": 0
+          },
+          "payload": {
+            "type": "string",
+            "description": "The base64-encoded body."
+          },
+          "round": {
+            "type": "integer",
+            "format": "int32",
+            "description": "The protocol round number.",
+            "minimum": 0
+          },
+          "to": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int32",
+            "description": "The recipient. Omitted means broadcast.",
+            "minimum": 0
+          }
+        }
+      }
+    }
+  }
+}

@@ -1,10 +1,10 @@
-//! 2-of-3 임계 ECDSA 프로토콜 코어.
+//! 2-of-3 threshold ECDSA protocol core.
 //!
-//! 확장은 이 crate를 wasm으로, 서버는 네이티브로 사용한다. 프로토콜 로직은
-//! 여기에만 존재하며 두 언어로 중복 구현하지 않는다 (`AGENTS.md` 참조).
+//! The extension consumes this crate as wasm and the server uses it natively. Protocol logic
+//! lives here and nowhere else — we never reimplement it in a second language (see `AGENTS.md`).
 //!
-//! 업스트림 MPC 구현([`Mpc`] 구현체)은 트레이트 뒤에 감춰진다. 확장·서버 코드가
-//! 업스트림 타입을 직접 참조하지 않으므로 라이브러리 교체가 가능하다
+//! The upstream MPC implementation stays behind this crate's own types, so extension and server
+//! code never references upstream types and the library remains replaceable
 //! (`docs/adr/0004-mpc-library-reselection.md`).
 
 mod backend;
@@ -19,9 +19,18 @@ pub use protocol::{DkgParty, Envelope, Progress};
 pub use session::{Round, SessionId};
 pub use share::{KeyShare, PartyId, PublicKey};
 
-/// 추출된 완전한 개인키 (32바이트 big-endian).
+/// How many of the three shares are needed to sign.
+pub const THRESHOLD: u8 = 2;
+
+/// How many shares exist in total.
+pub const TOTAL_PARTIES: u8 = 3;
+
+// A threshold at or above the total would make recovery impossible. Catch it at compile time.
+const _: () = assert!(THRESHOLD < TOTAL_PARTIES);
+
+/// A reconstructed private key, as 32 big-endian bytes.
 ///
-/// 이 값이 존재하는 동안 MPC의 보안 이점은 없다. 사용 후 즉시 폐기된다.
+/// While this value exists the MPC security benefit is gone. It is zeroized on drop.
 #[derive(zeroize::Zeroize, zeroize::ZeroizeOnDrop)]
 pub struct SecretKeyBytes(pub [u8; 32]);
 
@@ -31,50 +40,51 @@ impl core::fmt::Debug for SecretKeyBytes {
     }
 }
 
-/// 임계 ECDSA 서명 (secp256k1).
+/// A threshold ECDSA signature over secp256k1.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Signature {
-    /// r 성분.
+    /// The `r` component.
     pub r: [u8; 32],
-    /// s 성분. low-s로 정규화된다.
+    /// The `s` component, normalised to low-s.
     pub s: [u8; 32],
-    /// 공개키 복구 식별자.
+    /// Public key recovery identifier.
     pub recovery_id: u8,
 }
 
-/// 셰어 3개 중 서명에 필요한 최소 개수.
-pub const THRESHOLD: u8 = 2;
-
-/// 전체 셰어 개수.
-pub const TOTAL_PARTIES: u8 = 3;
-
-// 임계값이 전체 개수 이상이면 복구가 불가능하다. 컴파일 타임에 막는다.
-const _: () = assert!(THRESHOLD < TOTAL_PARTIES);
-
-/// 프로토콜 실행 중 발생하는 오류.
+/// An error raised while running the protocol.
 ///
-/// 비밀 값을 절대 담지 않는다. 오류 메시지는 로그·UI에 그대로 노출될 수 있다.
+/// Never carries secret material: these messages may be logged or shown in the UI verbatim.
 #[derive(Debug, thiserror::Error)]
 #[non_exhaustive]
 pub enum Error {
-    /// 라운드 순서를 어긴 메시지를 받았다. 세션은 폐기된다.
+    /// A message arrived out of round order. The session is discarded.
     #[error("unexpected round: expected {expected:?}, got {got:?}")]
-    UnexpectedRound { expected: Round, got: Round },
+    UnexpectedRound {
+        /// The round the session was expecting.
+        expected: Round,
+        /// The round the message claimed.
+        got: Round,
+    },
 
-    /// 세션을 찾을 수 없거나 이미 만료되었다.
+    /// The session is unknown or has already expired.
     #[error("unknown or expired session")]
     UnknownSession,
 
-    /// 참여자 수가 프로토콜 요구와 맞지 않는다.
+    /// The number of participants does not match what the protocol requires.
     #[error("invalid party count: expected {expected}, got {got}")]
-    InvalidPartyCount { expected: u8, got: u8 },
+    InvalidPartyCount {
+        /// How many parties the operation needs.
+        expected: u8,
+        /// How many were supplied.
+        got: u8,
+    },
 
-    /// 업스트림 MPC 구현이 보고한 오류.
+    /// The upstream MPC implementation reported a failure.
     #[error("mpc backend failure: {0}")]
     Backend(String),
 }
 
-/// 프로토콜 결과 타입.
+/// The protocol result type.
 pub type Result<T> = core::result::Result<T, Error>;
 
 impl fmt::Display for PartyId {

@@ -1,12 +1,13 @@
-//! 서버 진입점.
+//! Server entry point.
 //!
-//! 역할은 셰어 C 보관, DKG 참여, 복구 모드 서명 참여뿐이다.
-//! **평시 서명에는 관여하지 않는다** (`docs/server.md`).
-
-mod api;
+//! Its job is to store share C and to take part in DKG and in everyday and recovery signing
+//! (`docs/adr/0005-share-placement.md`).
 
 use std::net::SocketAddr;
 
+use mpc_server::api::{router, AppState};
+use mpc_server::crypto::SealingKey;
+use mpc_server::store::Store;
 use tracing_subscriber::EnvFilter;
 
 #[tokio::main]
@@ -15,13 +16,21 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .with_env_filter(EnvFilter::try_from_default_env().unwrap_or_else(|_| "info".into()))
         .init();
 
+    let database_url =
+        std::env::var("MPC_SERVER_DATABASE").unwrap_or_else(|_| "sqlite://mpc-ext.db".into());
     let addr: SocketAddr = std::env::var("MPC_SERVER_ADDR")
         .unwrap_or_else(|_| "127.0.0.1:8080".into())
         .parse()?;
 
+    let state = AppState {
+        store: Store::open(&database_url).await?,
+        sealing: SealingKey::from_env()?,
+    };
+
     let listener = tokio::net::TcpListener::bind(addr).await?;
     tracing::info!(%addr, docs = "/docs", "mpc-server listening");
+    tracing::warn!("authentication is not implemented yet; do not deploy this to production");
 
-    axum::serve(listener, api::router()).await?;
+    axum::serve(listener, router(state)).await?;
     Ok(())
 }

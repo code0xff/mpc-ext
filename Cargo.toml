@@ -15,6 +15,14 @@ serde = { version = "1", features = ["derive"] }
 thiserror = "2"
 zeroize = { version = "1", features = ["derive"] }
 
+# Tests run DKG repeatedly, and cryptographic code in a debug build is tens of times slower.
+# Optimise dependencies only: the suite stays fast while our own code keeps debug info.
+[profile.test.package."*"]
+opt-level = 3
+
+[profile.dev.package."*"]
+opt-level = 3
+
 [workspace.lints.rust]
 unsafe_code = "forbid"
 missing_debug_implementations = "warn"
