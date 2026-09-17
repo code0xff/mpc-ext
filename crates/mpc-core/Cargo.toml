@@ -27,3 +27,4 @@ workspace = true
 
 [dev-dependencies]
 k256 = "=0.14.0-rc.8"
+serde_json = "1.0.151"

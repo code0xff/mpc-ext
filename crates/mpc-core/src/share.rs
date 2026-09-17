@@ -3,7 +3,9 @@
 use zeroize::{Zeroize, ZeroizeOnDrop};
 
 /// 프로토콜 참여자 식별자. `0 <= id < TOTAL_PARTIES`.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, serde::Serialize, serde::Deserialize,
+)]
 pub struct PartyId(pub u8);
 
 /// 공동 공개키 (SEC1 압축 인코딩).

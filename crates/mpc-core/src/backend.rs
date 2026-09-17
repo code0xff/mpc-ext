@@ -49,7 +49,7 @@ fn from_upstream(index: PartyIndex) -> PartyId {
     PartyId(index.as_u8() - 1)
 }
 
-fn encode(party: &UpstreamParty) -> Result<Vec<u8>> {
+pub(crate) fn encode(party: &UpstreamParty) -> Result<Vec<u8>> {
     bincode::serialize(party).map_err(|e| Error::Backend(format!("share encode: {e}")))
 }
 
@@ -58,7 +58,7 @@ fn decode(share: &KeyShare) -> Result<UpstreamParty> {
         .map_err(|e| Error::Backend(format!("share decode: {e}")))
 }
 
-fn public_key_of(party: &UpstreamParty) -> Result<PublicKey> {
+pub(crate) fn public_key_of(party: &UpstreamParty) -> Result<PublicKey> {
     use elliptic_curve::sec1::ToSec1Point;
     let encoded = party.pk.to_sec1_point(true);
     let bytes = encoded.as_bytes();

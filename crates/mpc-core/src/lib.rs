@@ -8,12 +8,14 @@
 //! (`docs/adr/0004-mpc-library-reselection.md`).
 
 mod backend;
+pub mod protocol;
 pub mod session;
 pub mod share;
 
 use core::fmt;
 
 pub use backend::{dkg, export_private_key, refresh, reshare, sign, verify};
+pub use protocol::{DkgParty, Envelope, Progress};
 pub use session::{Round, SessionId};
 pub use share::{KeyShare, PartyId, PublicKey};
 

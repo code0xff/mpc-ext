@@ -827,6 +827,7 @@ dependencies = [
  "k256",
  "rustcrypto-ff",
  "serde",
+ "serde_json",
  "thiserror",
  "zeroize",
 ]
