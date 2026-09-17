@@ -13,9 +13,21 @@ pub mod share;
 
 use core::fmt;
 
-pub use backend::{dkg, refresh, sign, verify};
+pub use backend::{dkg, export_private_key, refresh, reshare, sign, verify};
 pub use session::{Round, SessionId};
 pub use share::{KeyShare, PartyId, PublicKey};
+
+/// 추출된 완전한 개인키 (32바이트 big-endian).
+///
+/// 이 값이 존재하는 동안 MPC의 보안 이점은 없다. 사용 후 즉시 폐기된다.
+#[derive(zeroize::Zeroize, zeroize::ZeroizeOnDrop)]
+pub struct SecretKeyBytes(pub [u8; 32]);
+
+impl core::fmt::Debug for SecretKeyBytes {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        f.write_str("SecretKeyBytes([redacted])")
+    }
+}
 
 /// 임계 ECDSA 서명 (secp256k1).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

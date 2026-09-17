@@ -21,7 +21,10 @@ use dkls23_secp256k1::protocols::{Parameters, Party, PartyIndex};
 use dkls23_secp256k1::utilities::hashes::HashOutput;
 use k256::Secp256k1;
 
-use crate::{Error, KeyShare, PartyId, PublicKey, Result, Signature, THRESHOLD, TOTAL_PARTIES};
+use crate::{
+    Error, KeyShare, PartyId, PublicKey, Result, SecretKeyBytes, Signature, THRESHOLD,
+    TOTAL_PARTIES,
+};
 
 type UpstreamParty = Party<Secp256k1>;
 
@@ -341,4 +344,136 @@ pub fn verify(public_key: &PublicKey, digest: &[u8; 32], signature: &Signature) 
     };
 
     Ok(verifying_key.verify_prehash(digest, &sig).is_ok())
+}
+
+/// 셰어들로부터 완전한 개인키를 복원한다 (Shamir 보간, x=0).
+///
+/// # 위험
+///
+/// 이 함수는 **MPC의 보안 이점을 없앤다.** 복원된 키는 한 곳에 존재하는 완전한
+/// 개인키이며, 호출부는 사용 후 즉시 폐기해야 한다. 사용자 기기에서만 호출하고,
+/// 서버로 보내거나 디스크에 쓰지 않는다 (`docs/export.md`, `docs/recovery.md`).
+fn reconstruct(shares: &[&KeyShare]) -> Result<ReconstructedKey> {
+    use elliptic_curve::Field;
+
+    if shares.len() < THRESHOLD as usize {
+        return Err(Error::InvalidPartyCount {
+            expected: THRESHOLD,
+            got: shares.len() as u8,
+        });
+    }
+
+    let parties: Vec<UpstreamParty> = shares.iter().map(|s| decode(s)).collect::<Result<_>>()?;
+    let indices: Vec<u64> = parties
+        .iter()
+        .map(|p| u64::from(p.party_index.as_u8()))
+        .collect();
+
+    // 같은 파티가 두 번 들어오면 보간이 성립하지 않는다.
+    let mut seen = indices.clone();
+    seen.sort_unstable();
+    seen.dedup();
+    if seen.len() != indices.len() {
+        return Err(Error::Backend("duplicate party in share set".into()));
+    }
+
+    // secret = Σ_i ( poly_point_i · Π_{j≠i} j / (j - i) )
+    let mut secret = <k256::Scalar as Field>::ZERO;
+    for (i, party) in parties.iter().enumerate() {
+        let me = k256::Scalar::from(indices[i]);
+        let mut numerator = <k256::Scalar as Field>::ONE;
+        let mut denominator = <k256::Scalar as Field>::ONE;
+        for (j, &other_index) in indices.iter().enumerate() {
+            if i == j {
+                continue;
+            }
+            let other = k256::Scalar::from(other_index);
+            numerator *= other;
+            denominator *= other - me;
+        }
+        let inverse = Option::<k256::Scalar>::from(denominator.invert())
+            .ok_or_else(|| Error::Backend("lagrange coefficient is not invertible".into()))?;
+        secret += party.poly_point * numerator * inverse;
+    }
+
+    Ok(ReconstructedKey { scalar: secret })
+}
+
+/// 복원된 개인키. 사용 후 zeroize된다.
+struct ReconstructedKey {
+    scalar: k256::Scalar,
+}
+
+impl Drop for ReconstructedKey {
+    fn drop(&mut self) {
+        use zeroize::Zeroize;
+        // Scalar 자체는 Zeroize를 구현하지 않으므로 바이트 표현을 지운다.
+        let mut bytes = self.to_bytes();
+        bytes.zeroize();
+        self.scalar = <k256::Scalar as elliptic_curve::Field>::ZERO;
+    }
+}
+
+impl ReconstructedKey {
+    fn to_bytes(&self) -> [u8; 32] {
+        use elliptic_curve::PrimeField;
+        let repr = self.scalar.to_repr();
+        let mut out = [0u8; 32];
+        out.copy_from_slice(repr.as_slice());
+        out
+    }
+}
+
+/// 완전한 개인키를 추출한다 (32바이트 big-endian).
+///
+/// # 위험
+///
+/// 이 순간 MPC의 이점이 사라진다. 상위 계층은 사용자에게 명시적으로 경고하고
+/// 확인을 받아야 한다 (`docs/export.md`).
+pub fn export_private_key(shares: &[&KeyShare]) -> Result<SecretKeyBytes> {
+    let key = reconstruct(shares)?;
+    Ok(SecretKeyBytes(key.to_bytes()))
+}
+
+/// 남은 셰어로부터 셰어 3개를 새로 발급한다 (리셰어).
+///
+/// 셰어를 잃은 자리를 새 기기로 채울 때 쓴다. 업스트림 리프레시는 셰어를 이미
+/// 가진 파티만 참여할 수 있어 이 경우를 다룰 수 없다
+/// (`docs/adr/0004-mpc-library-reselection.md` 발견 3).
+///
+/// # 위험
+///
+/// 내부적으로 개인키를 복원했다가 즉시 다시 나눈다. 그 사이 개인키가 한 곳에
+/// 존재한다(SPOF). **사용자 기기에서만 호출한다.** 서버에서 호출해서는 안 된다.
+/// 공개키는 유지되므로 주소는 바뀌지 않는다.
+pub fn reshare(shares: &[&KeyShare], session_id: &[u8; 32]) -> Result<(Vec<KeyShare>, PublicKey)> {
+    use dkls23_secp256k1::protocols::re_key::re_key;
+
+    let key = reconstruct(shares)?;
+    let (parties, _pkg) = re_key::<Secp256k1>(
+        &upstream_params(),
+        session_id.as_slice(),
+        &key.scalar,
+        None,
+        no_address,
+    );
+
+    let mut new_shares = Vec::with_capacity(parties.len());
+    let mut public_key: Option<PublicKey> = None;
+    for party in &parties {
+        let pk = public_key_of(party)?;
+        if public_key.get_or_insert(pk) != &public_key_of(party)? {
+            return Err(Error::Backend(
+                "reshare produced inconsistent public keys".into(),
+            ));
+        }
+        new_shares.push(KeyShare::new(
+            from_upstream(party.party_index),
+            encode(party)?,
+        ));
+    }
+
+    let public_key =
+        public_key.ok_or_else(|| Error::Backend("reshare produced no parties".into()))?;
+    Ok((new_shares, public_key))
 }
