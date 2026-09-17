@@ -1,21 +1,24 @@
 /**
- * 백그라운드 서비스 워커.
+ * The background service worker.
  *
- * 비밀에 접근하는 유일한 곳이다. 셰어 A는 이 워커의 메모리에만 복호화된 상태로
- * 존재하며, 워커가 종료되면 자동으로 잠긴다 (`docs/architecture.md`).
+ * The only place with access to secrets. Share A exists in decrypted form solely in this
+ * worker's memory, so the wallet locks itself whenever the worker is terminated
+ * (`docs/architecture.md`).
  */
 import type { CreatedKey, Request, Response, Status, WasmHealth } from '../src/messages';
 import * as vault from '../src/vault';
 import { loadWasm, threshold_config, wasmDkg } from '../src/wasm';
 
-/** 복호화된 셰어 A. 워커 종료와 함께 사라진다. 절대 저장하지 않는다. */
+/** The decrypted share A. Disappears with the worker, and is never persisted. */
 let unlockedShare: Uint8Array | undefined;
 
 /**
- * 온보딩 진행 중 상태. 복구 파일 저장이 확인될 때까지 **아무것도 저장하지 않는다.**
+ * In-flight onboarding state. **Nothing is persisted** until the recovery file is confirmed
+ * saved.
  *
- * 셰어 A만 저장해두고 워커가 죽으면 셰어 B는 영영 사라져 지갑이 못 쓰게 된다.
- * 그래서 둘 다 메모리에 들고 있다가 한 번에 확정한다 — 실패하면 아무 흔적도 남지 않는다.
+ * Storing share A first would mean that if the worker died before the export, share B would be
+ * gone forever and the wallet unusable. So both are held in memory and committed together:
+ * a failure leaves no trace at all.
  */
 let pending: { shareA: Uint8Array; publicKeyHex: string; password: string } | undefined;
 
@@ -37,15 +40,15 @@ async function status(): Promise<Status> {
 }
 
 /**
- * 키를 생성한다.
+ * Creates a key.
  *
- * DKG는 셰어 3개를 만들지만 확장은 **A만 보관한다.** B는 호출부로 넘겨 사용자가
- * 복구 파일로 보관하게 하고, C는 Phase 3에서 서버가 갖는다
+ * DKG produces three shares, but the extension **keeps only A.** B is handed back so the user
+ * can store it as a recovery file, and C belongs to the server
  * (`docs/adr/0005-share-placement.md`).
  */
 async function createKey(password: string): Promise<CreatedKey> {
-  if (password.length < 8) throw new Error('비밀번호는 8자 이상이어야 합니다');
-  if (await vault.exists()) throw new Error('이미 키가 있습니다');
+  if (password.length < 8) throw new Error('The password must be at least 8 characters.');
+  if (await vault.exists()) throw new Error('A key already exists.');
 
   await loadWasm();
   const sessionId = crypto.getRandomValues(new Uint8Array(32));
@@ -56,26 +59,27 @@ async function createKey(password: string): Promise<CreatedKey> {
   const publicKeyHex = toHex(keyset.public_key);
 
   pending = { shareA, publicKeyHex, password };
-  // 셰어 B는 여기서 넘긴 뒤 워커 메모리에 남기지 않는다.
+  // Share B is handed over here and left nowhere in worker memory.
   const recoveryShareHex = toHex(shareB);
   wipe(shareB);
 
   return { publicKeyHex, recoveryShareHex };
 }
 
-/** 복구 파일 저장이 확인되었다. 이제서야 셰어 A를 저장한다. */
+/** The recovery file is saved. Only now do we store share A. */
 async function confirmRecoverySaved(): Promise<Status> {
-  if (!pending) throw new Error('저장할 키가 없습니다');
+  if (!pending) throw new Error('There is no key waiting to be stored.');
 
   await vault.store(pending.password, pending.shareA, pending.publicKeyHex);
   unlockedShare = pending.shareA;
-  // JS 문자열은 지울 수 없다. 참조를 끊어 GC에 맡기는 것이 최선이다.
+  // JS strings cannot be wiped; dropping the reference and leaving it to the GC is the best
+  // we can do.
   pending = undefined;
 
   return status();
 }
 
-/** 온보딩을 취소한다. 생성된 셰어를 모두 버린다. */
+/** Cancels onboarding, discarding every share that was created. */
 function cancelOnboarding(): void {
   wipe(pending?.shareA);
   pending = undefined;
@@ -83,7 +87,7 @@ function cancelOnboarding(): void {
 
 async function unlock(password: string): Promise<Status> {
   const share = await vault.unlock(password);
-  if (!share) throw new Error('비밀번호가 올바르지 않습니다');
+  if (!share) throw new Error('That password is not correct.');
   unlockedShare = share;
   return status();
 }
@@ -120,7 +124,7 @@ async function handle(request: Request): Promise<unknown> {
       return status();
     default: {
       const exhaustive: never = request;
-      throw new Error(`알 수 없는 요청: ${JSON.stringify(exhaustive)}`);
+      throw new Error(`Unknown request: ${JSON.stringify(exhaustive)}`);
     }
   }
 }
@@ -130,14 +134,14 @@ export default defineBackground(() => {
     (request: Request, _sender, sendResponse: (response: Response<unknown>) => void) => {
       handle(request)
         .then((value) => sendResponse({ ok: true, value }))
-        // 오류 메시지에 비밀 값이 실리지 않도록 문자열만 전달한다.
+        // Pass a string only, so no secret can ride along in an error object.
         .catch((error: unknown) => {
           sendResponse({
             ok: false,
             error: error instanceof Error ? error.message : String(error),
           });
         });
-      // 비동기 응답을 쓰겠다는 신호.
+      // Signals that we will respond asynchronously.
       return true;
     },
   );

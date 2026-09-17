@@ -1,4 +1,4 @@
-/** background로 보내는 요청 래퍼. UI는 비밀 값을 직접 다루지 않는다. */
+/** Wraps requests to the background worker. The UI never handles secrets directly. */
 import type { Request, Response } from '../../src/messages';
 
 export async function send<T>(request: Request): Promise<T> {

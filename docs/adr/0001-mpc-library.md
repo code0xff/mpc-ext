@@ -1,28 +1,32 @@
-# ADR-0001: MPC 프로토콜과 라이브러리
+# ADR-0001: MPC protocol and library
 
-- 상태: **폐기됨 — ADR-0004로 대체**
-- 날짜: 2026-09-16
+- Status: **superseded by [ADR-0004](0004-mpc-library-reselection.md)**
+- Date: 2026-09-16
 
-## 맥락
+## Context
 
-2-of-3 임계 ECDSA가 필요하다. 확장(wasm)과 서버(네이티브)에서 같은 구현을 써야 하고,
-브라우저 환경에서 서명 지연이 사용자 체감 수준이어야 하며, 전부 오픈소스여야 한다.
+We need 2-of-3 threshold ECDSA. The extension (wasm) and the server (native) must run the same
+implementation, browser signing latency has to be acceptable to users, and everything has to be
+open source.
 
-## 결정 (폐기)
+## Decision (withdrawn)
 
-DKLs23을 채택하고 `silence-laboratories/dkls23`을 기반으로 한다.
+Adopt DKLs23 based on `silence-laboratories/dkls23`.
 
-## 폐기 사유
+## Why it was withdrawn
 
-`silence-laboratories/dkls23`의 라이선스를 Apache-2.0으로 잘못 기재했다. 실제로는
-**Silence Laboratories Non-Commercial Use License (SLL)** 이며 다음 이유로 사용할 수 없다.
+We recorded the licence of `silence-laboratories/dkls23` as Apache-2.0. It is in fact the
+**Silence Laboratories Non-Commercial Use License (SLL)**, which we cannot use:
 
-- 비상업적 사용만 허용하고, "internal business purposes"도 상업적 사용으로 금지한다.
-- **non-sublicensable** — 하위 배포자에게 권리를 넘길 수 없어 오픈소스 재배포가 불가능하다.
-- **revocable** — 라이선스를 철회할 수 있고, 약관도 일방적으로 변경할 수 있다.
+- It permits non-commercial use only, and explicitly counts "internal business purposes" as
+  commercial.
+- It is **non-sublicensable**, so we could not pass rights downstream — redistribution as open
+  source is impossible.
+- It is **revocable**, and the terms can be changed unilaterally.
 
-구형 `silence-laboratories/silent-shard-dkls23-ll`(wasm 바인딩 포함)도 동일한 SLL이다.
-기능적으로는 우수하나(Trail of Bits 감사 2024-02, 감사된 key refresh, export/import 내장)
-"전부 오픈소스"라는 프로젝트 대전제와 충돌하므로 후보에서 제외한다.
+The older `silence-laboratories/silent-shard-dkls23-ll` (which ships wasm bindings) carries the
+same SLL. Functionally it is strong — a Trail of Bits audit from February 2024, audited key
+refresh, built-in export/import — but it conflicts with this project's open-source ground rule,
+so it is out.
 
-대체 결정은 [ADR-0004](0004-mpc-library-reselection.md).
+The replacement decision is [ADR-0004](0004-mpc-library-reselection.md).

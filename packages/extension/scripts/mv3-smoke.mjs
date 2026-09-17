@@ -1,10 +1,11 @@
 /**
- * MV3 서비스 워커에서 wasm이 실제로 구동되는지 확인한다.
+ * Confirms that wasm actually runs inside an MV3 service worker.
  *
- * Phase 2의 최대 기술 리스크였다. 빌드가 되는 것과 서비스 워커에서 도는 것은
- * 다른 문제이므로, 실제 Chrome에 확장을 올려 워커 안에서 프로토콜을 실행한다.
+ * This was the biggest technical risk of the extension work. Building successfully and running
+ * inside a service worker are different questions, so we load the extension into a real Chrome
+ * and drive the protocol from inside the worker.
  *
- * 실행: pnpm -C packages/extension smoke
+ * Run with: pnpm -C packages/extension smoke
  */
 import { existsSync, readdirSync } from 'node:fs';
 import { mkdtemp, rm } from 'node:fs/promises';
@@ -14,8 +15,9 @@ import { join } from 'node:path';
 import puppeteer from 'puppeteer-core';
 
 /**
- * Chrome 137부터 일반 Chrome은 보안상 `--load-extension`을 무시한다. 자동화에는
- * Chrome for Testing을 쓴다 — `pnpm dlx @puppeteer/browsers install chrome@stable`.
+ * From Chrome 137 on, the regular browser ignores `--load-extension` for security reasons, so
+ * automation needs Chrome for Testing:
+ * `pnpm dlx @puppeteer/browsers install chrome@stable`.
  */
 function findChrome() {
   if (process.env.CHROME_PATH) return process.env.CHROME_PATH;
@@ -38,13 +40,13 @@ const CHROME = findChrome();
 const EXTENSION = new URL('../.output/chrome-mv3', import.meta.url).pathname;
 
 if (!existsSync(EXTENSION)) {
-  console.error('확장 빌드가 없습니다. 먼저 `make build`를 실행하세요.');
+  console.error('No extension build found. Run `make build` first.');
   process.exit(1);
 }
 
 if (!CHROME) {
   console.error(
-    'Chrome for Testing이 없습니다. `pnpm dlx @puppeteer/browsers install chrome@stable`을 실행하세요.',
+    'Chrome for Testing is missing. Run `pnpm dlx @puppeteer/browsers install chrome@stable`.',
   );
   process.exit(1);
 }
@@ -52,10 +54,10 @@ if (!CHROME) {
 const profile = await mkdtemp(join(tmpdir(), 'mpc-ext-smoke-'));
 const browser = await puppeteer.launch({
   executablePath: CHROME,
-  // MV3 확장은 새 headless 모드에서만 로드된다. CI에서도 동일하게 동작한다.
+  // MV3 extensions load only in the new headless mode. CI behaves the same way.
   headless: process.env.SMOKE_HEADFUL ? false : 'new',
   userDataDir: profile,
-  // puppeteer 기본 인자에 --disable-extensions가 들어 있어 확장이 로드되지 않는다.
+  // puppeteer's default arguments include --disable-extensions, which stops the load.
   ignoreDefaultArgs: ['--disable-extensions'],
   args: [
     `--disable-extensions-except=${EXTENSION}`,
@@ -67,20 +69,20 @@ const browser = await puppeteer.launch({
 
 let failed = false;
 try {
-  // 서비스 워커가 등록될 때까지 기다린다.
+  // Wait for the service worker to register.
   const target = await browser
     .waitForTarget((t) => t.type() === 'service_worker', { timeout: 20_000 })
     .catch(async (cause) => {
       const seen = browser.targets().map((t) => `${t.type()} ${t.url()}`);
-      throw new Error(`${cause.message}\n발견된 타깃:\n  ${seen.join('\n  ')}`);
+      throw new Error(`${cause.message}\nTargets seen:\n  ${seen.join('\n  ')}`);
     });
   const worker = await target.worker();
-  if (!worker) throw new Error('서비스 워커에 붙지 못했습니다');
+  if (!worker) throw new Error('could not attach to the service worker');
 
-  console.log('서비스 워커 등록됨:', target.url());
+  console.log('service worker registered:', target.url());
 
-  // 서비스 워커가 자기 자신에게 보낸 메시지는 수신되지 않는다. 실제 경로대로
-  // 팝업 페이지에서 호출해 서비스 워커가 처리하게 한다.
+  // A service worker does not receive its own messages, so drive the real path: call from the
+  // popup page and let the worker handle it.
   const extensionId = new URL(target.url()).host;
   const page = await browser.newPage();
   await page.goto(`chrome-extension://${extensionId}/popup.html`);
@@ -100,44 +102,45 @@ try {
       return response.value;
     };
 
-    const health = await expect({ type: 'wasmHealth' }, 'wasm 로드');
+    const health = await expect({ type: 'wasmHealth' }, 'wasm load');
 
-    const before = await expect({ type: 'status' }, '초기 상태');
-    if (before.kind !== 'uninitialized') throw new Error(`초기 상태가 다릅니다: ${before.kind}`);
+    const before = await expect({ type: 'status' }, 'initial status');
+    if (before.kind !== 'uninitialized')
+      throw new Error(`unexpected initial state: ${before.kind}`);
 
     const started = performance.now();
     const created = await expect({ type: 'createKey', password: 'correct horse' }, 'DKG');
     const dkgMs = Math.round(performance.now() - started);
 
-    // 복구 파일을 저장하기 전에는 아무것도 저장되지 않아야 한다 (원자적 온보딩).
-    const midway = await expect({ type: 'status' }, '중간 상태');
+    // Nothing may be persisted before the recovery file is saved (atomic onboarding).
+    const midway = await expect({ type: 'status' }, 'intermediate status');
     if (midway.kind !== 'awaitingRecoveryExport') {
-      throw new Error(`복구 파일 대기 상태여야 합니다: ${midway.kind}`);
+      throw new Error(`expected to be awaiting the recovery export: ${midway.kind}`);
     }
     const storedMidway = await chrome.storage.local.get('vault');
-    if (storedMidway.vault) throw new Error('복구 파일 저장 전에 셰어가 저장되었습니다');
+    if (storedMidway.vault) throw new Error('a share was stored before the recovery export');
 
-    const confirmed = await expect({ type: 'confirmRecoverySaved' }, '복구 파일 확인');
-    if (confirmed.kind !== 'unlocked') throw new Error(`열린 상태여야 합니다: ${confirmed.kind}`);
+    const confirmed = await expect({ type: 'confirmRecoverySaved' }, 'recovery confirmation');
+    if (confirmed.kind !== 'unlocked') throw new Error(`expected unlocked: ${confirmed.kind}`);
 
-    // 잠금 → 틀린 비밀번호 거부 → 올바른 비밀번호로 해제.
-    const locked = await expect({ type: 'lock' }, '잠금');
-    if (locked.kind !== 'locked') throw new Error(`잠긴 상태여야 합니다: ${locked.kind}`);
+    // Lock, reject the wrong password, then unlock with the right one.
+    const locked = await expect({ type: 'lock' }, 'lock');
+    if (locked.kind !== 'locked') throw new Error(`expected locked: ${locked.kind}`);
 
     const wrong = await send({ type: 'unlock', password: 'wrong horse' });
-    if (wrong.ok) throw new Error('틀린 비밀번호가 통과했습니다');
+    if (wrong.ok) throw new Error('a wrong password was accepted');
 
-    const unlocked = await expect({ type: 'unlock', password: 'correct horse' }, '잠금 해제');
-    if (unlocked.kind !== 'unlocked') throw new Error(`열린 상태여야 합니다: ${unlocked.kind}`);
+    const unlocked = await expect({ type: 'unlock', password: 'correct horse' }, 'unlock');
+    if (unlocked.kind !== 'unlocked') throw new Error(`expected unlocked: ${unlocked.kind}`);
     if (unlocked.publicKeyHex !== created.publicKeyHex) {
-      throw new Error('해제 후 공개키가 달라졌습니다');
+      throw new Error('the public key changed after unlocking');
     }
 
-    // 저장소에 평문 셰어가 남지 않아야 한다.
+    // No plaintext share may survive in storage.
     const stored = await chrome.storage.local.get('vault');
     const serialized = JSON.stringify(stored);
     if (serialized.includes(created.recoveryShareHex.slice(0, 64))) {
-      throw new Error('저장소에 평문 셰어가 남아 있습니다');
+      throw new Error('a plaintext share survived in storage');
     }
 
     return {
@@ -149,19 +152,21 @@ try {
     };
   });
 
-  console.log('\n--- MV3 서비스 워커 실측 ---');
-  console.log(`임계 설정      ${result.config}`);
-  console.log(`wasm 로드      ${result.loadMs} ms`);
-  console.log(`DKG (3파티)    ${result.dkgMs} ms`);
-  console.log(`공개키         ${result.publicKey.slice(0, 24)}…`);
-  console.log(`복구 셰어 크기 ${result.recoveryShareBytes} bytes`);
+  console.log('\n--- measured inside the MV3 service worker ---');
+  console.log(`threshold        ${result.config}`);
+  console.log(`wasm load        ${result.loadMs} ms`);
+  console.log(`DKG (3 parties)  ${result.dkgMs} ms`);
+  console.log(`public key       ${result.publicKey.slice(0, 24)}…`);
+  console.log(`recovery share   ${result.recoveryShareBytes} bytes`);
 
-  if (result.config !== '2-of-3') throw new Error(`임계 설정이 다릅니다: ${result.config}`);
-  if (result.publicKey.length !== 66) throw new Error('공개키 길이가 33바이트가 아닙니다');
-  console.log('\n통과: MV3 서비스 워커에서 DKG · 원자적 온보딩 · 잠금/해제가 모두 동작합니다.');
+  if (result.config !== '2-of-3') throw new Error(`unexpected threshold: ${result.config}`);
+  if (result.publicKey.length !== 66) throw new Error('the public key is not 33 bytes');
+  console.log(
+    '\nPASS: DKG, atomic onboarding and lock/unlock all work inside the MV3 service worker.',
+  );
 } catch (error) {
   failed = true;
-  console.error('\n실패:', error.message);
+  console.error('\nFAIL:', error.message);
 } finally {
   await browser.close();
   await rm(profile, { recursive: true, force: true });

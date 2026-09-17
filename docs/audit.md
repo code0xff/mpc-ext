@@ -1,53 +1,60 @@
-# 외부 보안 감사 계획
+# External security audit plan
 
-> 상태: **초안 — 예산과 시기는 미정.** Phase 1 종료 조건이므로 채워야 한다
-> ([adr/0004](adr/0004-mpc-library-reselection.md) 완화책 3).
+> Status: **draft — budget and timing undecided.** This is a Phase 1 exit condition
+> ([adr/0004](adr/0004-mpc-library-reselection.md), mitigation 3).
 
-## 왜 필요한가
+## Why we need one
 
-채택한 MPC 라이브러리 `0xCarbon/DKLs23`에 **외부 감사 이력이 없다**. 코드 품질은 양호하나
-(unsafe 0건, zeroize·subtle 사용, 적대적 테스트 존재) 감사받지 않은 암호 구현 위에 키 수탁
-제품을 올리는 것이므로, 감사 비용을 우리가 부담한다는 전제로 이 라이브러리를 선택했다.
+The MPC library we adopted, `0xCarbon/DKLs23`, **has no external audit history**. Its code
+quality is good — no `unsafe`, it uses `zeroize` and `subtle`, and it has adversarial tests —
+but we are putting a key-custody product on top of an unaudited cryptographic implementation. We
+chose it on the explicit assumption that we would pay for the audit ourselves.
 
-## 범위
+## Scope
 
-우선순위 순.
+In priority order.
 
-1. **vendoring한 MPC crate** — `dkls23-core`, `dkls23-secp256k1` (고정 버전 `=0.5.1`).
-   OT 확장, 곱셈 프로토콜, 영지식 증명, DKG·서명·리프레시 라운드 로직.
-2. **`crates/mpc-core`** — 특히 다음 두 가지.
-   - `reshare` / `export_private_key`의 **개인키 복원 구간**. 설계상 SPOF가 존재하는
-     유일한 지점이다 (`recovery.md`). 복원 값의 수명, zeroize, 호출 경로를 중점 검토.
-   - 셰어 직렬화와 파티 식별자 처리.
-3. **확장 저장소와 잠금** — KDF 파라미터, AEAD 사용, 잠금 해제 상태의 메모리 수명 (`security.md`).
-4. **복구 경로** — 서버 인증, 지연 기간, 리셰어 전후의 상태 전이 (`recovery.md`).
-5. **웹 provider 경계** — origin 검증과 승인 흐름 (`web-api.md`).
+1. **The pinned MPC crates** — `dkls23-core` and `dkls23-secp256k1` at the exact version we ship.
+   OT extension, the multiplication protocol, zero-knowledge proofs, and the DKG, signing and
+   refresh rounds.
+2. **`crates/mpc-core`**, especially:
+   - The private key reconstruction inside `reshare` and `export_private_key`. It is the only
+     point in the design where a single point of failure exists (`recovery.md`). Review the
+     lifetime of the reconstructed value, zeroization, and every call path.
+   - Share serialization and party identifier handling.
+3. **Extension storage and locking** — KDF parameters, AEAD usage, and how long secrets live in
+   memory while unlocked (`security.md`).
+4. **The recovery path** — server authentication, the cooling-off period, and state transitions
+   around reshare (`recovery.md`).
+5. **The web provider boundary** — origin checks and the approval flow (`web-api.md`).
 
-## 범위 밖
+## Out of scope
 
-- 루팅된 OS, 커널 레벨 키로거, 물리적 강압.
-- 잠금 해제된 확장을 장악한 공격자 — 알려진 설계 한계이며 문서에 명시되어 있다 (`security.md`).
+- A rooted OS, kernel-level keyloggers, physical coercion.
+- An attacker holding both the extension and a recovery file stored on the same machine — a
+  documented user-side risk (`security.md`).
 
-## 전제 조건
+## Prerequisites
 
-감사 착수 전에 갖춰야 할 것.
+Before an audit can start:
 
-- [ ] MPC crate를 소스 트리로 vendoring하여 감사 대상을 커밋 단위로 동결
-- [ ] 재현 가능 빌드 절차 확립 (`development.md`)
-- [ ] 위협 모델 문서 최신화 (`security.md`)
-- [ ] 서버 인증 설계 완료 (`server.md` — 현재 미정)
+- [ ] Vendor the MPC crate into the source tree so the audited code is frozen at a commit
+- [ ] Establish reproducible builds (`development.md`)
+- [ ] Bring the threat model up to date (`security.md`)
+- [ ] Finish the server authentication design (`server.md`, currently undecided)
 
-## 미정 — 결정 필요
+## Undecided — needs a decision
 
-| 항목           | 상태                                         |
-| -------------- | -------------------------------------------- |
-| 감사 기관      | 미정                                         |
-| 예산           | 미정                                         |
-| 시기           | Phase 6 이전. 구체적 시점 미정               |
-| 감사 범위 확정 | 위 1~5 중 어디까지 포함할지 예산에 따라 결정 |
+| Item        | Status                                           |
+| ----------- | ------------------------------------------------ |
+| Auditor     | Undecided                                        |
+| Budget      | Undecided                                        |
+| Timing      | Before Phase 6; exact date undecided             |
+| Final scope | How much of items 1–5 we cover depends on budget |
 
-## 원칙
+## Principles
 
-- 감사 대상 커밋과 결과 리포트를 **저장소에 공개**한다.
-- 감사 완료 전까지 README와 확장 UI에 **실자산 사용 비권장** 경고를 표시한다.
-- 발견된 업스트림 취약점은 업스트림에 책임 있게 공개한다.
+- **Publish** the audited commit and the resulting report in this repository.
+- Until the audit is complete, keep the **do not use with real assets** warning in the README and
+  the extension UI.
+- Disclose any upstream vulnerabilities we find responsibly, to upstream.

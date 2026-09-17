@@ -1,11 +1,11 @@
 packages:
   - packages/*
 
-# pnpm은 의존성의 postinstall 스크립트를 기본 차단한다 (공급망 방어).
-# 실행이 필요한 것만 명시적으로 허용한다. 추가 시 PR에서 사유를 남긴다.
-#   esbuild    — vitest·wxt가 쓰는 번들러. 플랫폼 바이너리 설치에 필요.
-#   lefthook   — git 훅 바이너리 설치에 필요.
-#   spawn-sync — 구형 Node용 레거시 폴리필. 현재 Node에서는 불필요하므로 거부.
+# pnpm blocks dependency postinstall scripts by default (supply-chain defence).
+# Allow only what genuinely needs to run, and justify additions in the PR.
+#   esbuild    — the bundler vitest and wxt use; needs its platform binary.
+#   lefthook   — needs to install its git-hook binary.
+#   spawn-sync — a legacy polyfill for old Node; unnecessary here, so denied.
 allowBuilds:
   esbuild: true
   lefthook: true

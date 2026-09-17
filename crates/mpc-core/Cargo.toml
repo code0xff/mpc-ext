@@ -1,6 +1,6 @@
 [package]
 name = "mpc-core"
-description = "2-of-3 임계 ECDSA 프로토콜 코어. 확장(wasm)과 서버가 공유하는 단일 진실 공급원."
+description = "2-of-3 threshold ECDSA protocol core, shared by the extension (wasm) and the server"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
@@ -8,12 +8,12 @@ license.workspace = true
 repository.workspace = true
 
 [dependencies]
-# ADR-0004: 고정 버전 핀. dependabot 무시 목록에 있어 자동 업데이트되지 않는다.
-# 업스트림 변경은 리뷰 후 수동으로 올린다.
+# ADR-0004: exact version pin. Dependabot ignores it, so it never updates automatically;
+# upstream changes land manually after review.
 dkls23-secp256k1 = "=0.5.1"
-# 업스트림은 RustCrypto pre-release에 맞춰 빌드되어 있고, stable 0.14.1이 나온 뒤로
-# 기본 해석으로는 컴파일되지 않는다. 업스트림 Cargo.lock과 같은 버전으로 고정한다.
-# 업스트림이 stable로 올라가면 이 핀을 걷어낸다 (ADR-0004 완화책 5).
+# Upstream was built against RustCrypto pre-releases and no longer compiles under default
+# resolution now that stable 0.14.1 exists. Pin the same versions upstream's Cargo.lock uses.
+# Drop these pins once upstream moves to stable (ADR-0004, mitigation 5).
 elliptic-curve = "=0.14.0-rc.29"
 k256 = "=0.14.0-rc.8"
 rustcrypto-ff = "=0.14.0-rc.0"

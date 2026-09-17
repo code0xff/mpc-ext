@@ -1,12 +1,12 @@
-//! 업스트림 DKLs23 구현을 감싸는 내부 계층.
+//! The internal layer wrapping the upstream DKLs23 implementation.
 //!
-//! **업스트림 타입은 이 모듈 밖으로 나가지 않는다.** 상위 계층(확장 background,
-//! 서버 핸들러)은 `mpc-core`의 자체 타입만 보므로, 라이브러리를 교체해도
-//! 호출부가 바뀌지 않는다 (`docs/adr/0004-mpc-library-reselection.md` 완화책 2).
+//! **Upstream types never leave this module.** Callers above it — the extension background
+//! worker, the server handlers — see only `mpc-core`'s own types, so swapping the library does
+//! not change them (`docs/adr/0004-mpc-library-reselection.md`, mitigation 2).
 //!
-//! 현재 오케스트레이션은 모든 파티를 한 프로세스에서 실행한다. 실제 배포에서는
-//! 파티가 확장 2 + 서버 1로 나뉘며, 그 전송 계층은 Phase 3에서 붙인다
-//! (`docs/roadmap.md`). 라운드별 메시지 경로는 동일하다.
+//! The orchestration here runs every party in a single process. For the split deployment, where
+//! the extension and the server each drive their own party, see [`crate::protocol`]. The
+//! per-round message flow is identical.
 
 use std::collections::BTreeMap;
 
@@ -28,7 +28,7 @@ use crate::{
 
 type UpstreamParty = Party<Secp256k1>;
 
-/// 주소 문자열은 `mpc-core`의 관심사가 아니다. 체인별 주소 유도는 상위 계층이 한다.
+/// Address strings are not this crate's concern; chain-specific derivation happens above.
 fn no_address(_pk: &k256::AffinePoint) -> String {
     String::new()
 }
@@ -40,7 +40,7 @@ fn upstream_params() -> Parameters {
     }
 }
 
-/// `PartyId`(0-based)를 업스트림의 1-based 인덱스로 옮긴다.
+/// Converts our 0-based `PartyId` into upstream's 1-based index.
 fn to_upstream(party: PartyId) -> Result<PartyIndex> {
     PartyIndex::new(party.0 + 1).map_err(|e| Error::Backend(e.to_string()))
 }
@@ -68,7 +68,7 @@ pub(crate) fn public_key_of(party: &UpstreamParty) -> Result<PublicKey> {
     Ok(PublicKey(out))
 }
 
-/// 수신자가 우리인 메시지만 골라낸다. 각 라운드의 메시지 라우팅에 쓴다.
+/// Keeps only the messages addressed to us. Used to route each round.
 fn route<T: Clone>(all: &[Vec<T>], me: PartyIndex, receiver: impl Fn(&T) -> PartyIndex) -> Vec<T> {
     all.iter()
         .flatten()
@@ -77,10 +77,10 @@ fn route<T: Clone>(all: &[Vec<T>], me: PartyIndex, receiver: impl Fn(&T) -> Part
         .collect()
 }
 
-/// 3파티 분산 키 생성.
+/// Three-party distributed key generation.
 ///
-/// 어떤 파티도 완전한 개인키를 보지 않는다. 실패하면 부분 결과를 남기지 않고
-/// 전체가 실패한다 — 호출부는 성공 시에만 셰어를 저장해야 한다.
+/// No party ever sees the complete private key. On failure nothing partial survives, so callers
+/// must persist shares only on success.
 pub fn dkg(session_id: &[u8; 32]) -> Result<(Vec<KeyShare>, PublicKey)> {
     let params = upstream_params();
     let n = TOTAL_PARTIES as usize;
@@ -93,7 +93,7 @@ pub fn dkg(session_id: &[u8; 32]) -> Result<(Vec<KeyShare>, PublicKey)> {
         .map(|&idx| DkgSession::new(params.clone(), idx, session_id.to_vec()))
         .collect();
 
-    // 라운드 1 — 각 파티가 모든 파티에게 다항식 조각을 보낸다.
+    // Round 1 — every party sends a polynomial fragment to every party.
     let rows: Vec<Vec<k256::Scalar>> = sessions.iter().map(DkgSession::phase1).collect();
     let mut fragments: Vec<Vec<k256::Scalar>> = vec![Vec::with_capacity(n); n];
     for row in &rows {
@@ -102,7 +102,7 @@ pub fn dkg(session_id: &[u8; 32]) -> Result<(Vec<KeyShare>, PublicKey)> {
         }
     }
 
-    // 라운드 2
+    // Round 2
     let mut proofs: Vec<ProofCommitment<Secp256k1>> = Vec::with_capacity(n);
     let mut zero_2to4: Vec<Vec<TransmitInitZeroSharePhase2to4>> = Vec::with_capacity(n);
     let mut bip_2to4: BTreeMap<PartyIndex, BroadcastDerivationPhase2to4> = BTreeMap::new();
@@ -115,7 +115,7 @@ pub fn dkg(session_id: &[u8; 32]) -> Result<(Vec<KeyShare>, PublicKey)> {
         bip_2to4.insert(indices[i], bip);
     }
 
-    // 라운드 3
+    // Round 3
     let mut zero_3to4: Vec<Vec<TransmitInitZeroSharePhase3to4>> = Vec::with_capacity(n);
     let mut mul_3to4: Vec<Vec<TransmitInitMulPhase3to4<Secp256k1>>> = Vec::with_capacity(n);
     let mut bip_3to4: BTreeMap<PartyIndex, BroadcastDerivationPhase3to4> = BTreeMap::new();
@@ -128,7 +128,7 @@ pub fn dkg(session_id: &[u8; 32]) -> Result<(Vec<KeyShare>, PublicKey)> {
         bip_3to4.insert(indices[i], bip);
     }
 
-    // 라운드 4 — 각 파티가 자신의 셰어와 공동 공개키를 확정한다.
+    // Round 4 — each party settles on its share and the joint public key.
     let mut shares = Vec::with_capacity(n);
     let mut public_key: Option<PublicKey> = None;
     for (i, session) in sessions.into_iter().enumerate() {
@@ -163,9 +163,10 @@ pub fn dkg(session_id: &[u8; 32]) -> Result<(Vec<KeyShare>, PublicKey)> {
     Ok((shares, public_key))
 }
 
-/// 임계 서명. 정확히 [`THRESHOLD`]개의 셰어가 참여해야 한다.
+/// Threshold signing. Exactly [`THRESHOLD`] shares must take part.
 ///
-/// 평시에는 확장이 가진 두 셰어로, 복구 모드에서는 남은 셰어와 서버 셰어로 호출한다.
+/// Everyday signing passes the extension share and the server share; recovery passes whichever
+/// two survive.
 pub fn sign(shares: &[&KeyShare], sign_id: &[u8; 32], digest: &[u8; 32]) -> Result<Signature> {
     if shares.len() != THRESHOLD as usize {
         return Err(Error::InvalidPartyCount {
@@ -187,7 +188,7 @@ pub fn sign(shares: &[&KeyShare], sign_id: &[u8; 32], digest: &[u8; 32]) -> Resu
         })
         .collect();
 
-    // 라운드 1
+    // Round 1
     let mut sessions = Vec::with_capacity(parties.len());
     let mut transmit_1to2 = Vec::with_capacity(parties.len());
     for (party, data) in parties.iter().zip(sessions_data) {
@@ -197,7 +198,7 @@ pub fn sign(shares: &[&KeyShare], sign_id: &[u8; 32], digest: &[u8; 32]) -> Resu
         transmit_1to2.push(transmit);
     }
 
-    // 라운드 2
+    // Round 2
     let mut transmit_2to3 = Vec::with_capacity(parties.len());
     for (i, session) in sessions.iter_mut().enumerate() {
         let received = route(&transmit_1to2, signers[i], |m| m.parties.receiver);
@@ -208,7 +209,7 @@ pub fn sign(shares: &[&KeyShare], sign_id: &[u8; 32], digest: &[u8; 32]) -> Resu
         );
     }
 
-    // 라운드 3
+    // Round 3
     let mut broadcasts = Vec::with_capacity(parties.len());
     for (i, session) in sessions.iter_mut().enumerate() {
         let received = route(&transmit_2to3, signers[i], |m| m.parties.receiver);
@@ -219,7 +220,7 @@ pub fn sign(shares: &[&KeyShare], sign_id: &[u8; 32], digest: &[u8; 32]) -> Resu
         );
     }
 
-    // 라운드 4 — 모든 참여자가 같은 서명을 얻어야 한다.
+    // Round 4 — every participant must arrive at the same signature.
     let mut signature: Option<Signature> = None;
     for session in sessions {
         let sig = session
@@ -244,11 +245,11 @@ pub fn sign(shares: &[&KeyShare], sign_id: &[u8; 32], digest: &[u8; 32]) -> Resu
     signature.ok_or_else(|| Error::Backend("signing produced no signature".into()))
 }
 
-/// 키 리프레시. 공개키를 유지한 채 모든 셰어를 재생성한다.
+/// Key refresh: regenerate every share while keeping the public key.
 ///
-/// 옛 셰어는 이 시점부터 서명에 쓸 수 없다. 복구 직후 반드시 실행한다
-/// (`docs/recovery.md`). **모든 파티가 참여해야 한다** — 셰어를 잃은 파티를
-/// 새 기기로 대체하는 경우는 리프레시가 아니라 리셰어이며, 별도 절차다.
+/// Old shares stop working from this point on. Run it immediately after a recovery
+/// (`docs/recovery.md`). **Every party must take part** — replacing a lost party with a new
+/// device is a reshare, not a refresh, and follows a different procedure ([`reshare`]).
 pub fn refresh(shares: &[KeyShare], session_id: &[u8; 32]) -> Result<Vec<KeyShare>> {
     if shares.len() != TOTAL_PARTIES as usize {
         return Err(Error::InvalidPartyCount {
@@ -261,7 +262,8 @@ pub fn refresh(shares: &[KeyShare], session_id: &[u8; 32]) -> Result<Vec<KeyShar
     let parties: Vec<UpstreamParty> = shares.iter().map(decode).collect::<Result<_>>()?;
     let indices: Vec<PartyIndex> = parties.iter().map(|p| p.party_index).collect();
 
-    // 라운드 1 — 상수항이 0인 다항식 조각. 공개키를 바꾸지 않는 보정값이다.
+    // Round 1 — polynomial fragments with a zero constant term: corrections that leave
+    // the public key untouched.
     let rows: Vec<Vec<k256::Scalar>> = parties
         .iter()
         .map(UpstreamParty::refresh_complete_phase1)
@@ -319,15 +321,15 @@ pub fn refresh(shares: &[KeyShare], session_id: &[u8; 32]) -> Result<Vec<KeyShar
     Ok(refreshed)
 }
 
-/// 리프레시 중간 상태. 라운드 사이에만 살아 있다.
+/// Intermediate refresh state. Lives only between rounds.
 struct RefreshState {
     point: k256::Scalar,
     zero_keep: BTreeMap<PartyIndex, dkls23_secp256k1::protocols::dkg::KeepInitZeroSharePhase2to3>,
 }
 
-/// 서명이 해당 공개키에 대해 유효한지 검증한다.
+/// Checks a signature against a public key.
 ///
-/// 테스트와 상위 계층의 사후 확인에 쓴다. 비밀 값을 다루지 않는다.
+/// Used by tests and by callers double-checking their own output. Touches no secrets.
 pub fn verify(public_key: &PublicKey, digest: &[u8; 32], signature: &Signature) -> Result<bool> {
     use k256::ecdsa::signature::hazmat::PrehashVerifier;
 
@@ -339,20 +341,20 @@ pub fn verify(public_key: &PublicKey, digest: &[u8; 32], signature: &Signature) 
     sig_bytes[32..].copy_from_slice(&signature.s);
     let sig = match k256::ecdsa::Signature::from_slice(&sig_bytes) {
         Ok(sig) => sig,
-        // 형식이 어긋난 서명은 오류가 아니라 "유효하지 않음"이다.
+        // A malformed signature is "invalid", not an error.
         Err(_) => return Ok(false),
     };
 
     Ok(verifying_key.verify_prehash(digest, &sig).is_ok())
 }
 
-/// 셰어들로부터 완전한 개인키를 복원한다 (Shamir 보간, x=0).
+/// Reconstructs the full private key from shares (Shamir interpolation at x = 0).
 ///
-/// # 위험
+/// # Danger
 ///
-/// 이 함수는 **MPC의 보안 이점을 없앤다.** 복원된 키는 한 곳에 존재하는 완전한
-/// 개인키이며, 호출부는 사용 후 즉시 폐기해야 한다. 사용자 기기에서만 호출하고,
-/// 서버로 보내거나 디스크에 쓰지 않는다 (`docs/export.md`, `docs/recovery.md`).
+/// This **removes the MPC security benefit.** The result is a complete private key sitting in
+/// one place, and callers must discard it immediately. Call it on the user's device only; never
+/// send it to the server or write it to disk (`docs/export.md`, `docs/recovery.md`).
 fn reconstruct(shares: &[&KeyShare]) -> Result<ReconstructedKey> {
     use elliptic_curve::Field;
 
@@ -369,7 +371,7 @@ fn reconstruct(shares: &[&KeyShare]) -> Result<ReconstructedKey> {
         .map(|p| u64::from(p.party_index.as_u8()))
         .collect();
 
-    // 같은 파티가 두 번 들어오면 보간이 성립하지 않는다.
+    // The same party appearing twice breaks the interpolation.
     let mut seen = indices.clone();
     seen.sort_unstable();
     seen.dedup();
@@ -399,7 +401,7 @@ fn reconstruct(shares: &[&KeyShare]) -> Result<ReconstructedKey> {
     Ok(ReconstructedKey { scalar: secret })
 }
 
-/// 복원된 개인키. 사용 후 zeroize된다.
+/// A reconstructed private key. Zeroized when dropped.
 struct ReconstructedKey {
     scalar: k256::Scalar,
 }
@@ -407,7 +409,7 @@ struct ReconstructedKey {
 impl Drop for ReconstructedKey {
     fn drop(&mut self) {
         use zeroize::Zeroize;
-        // Scalar 자체는 Zeroize를 구현하지 않으므로 바이트 표현을 지운다.
+        // Scalar does not implement Zeroize, so wipe the byte representation instead.
         let mut bytes = self.to_bytes();
         bytes.zeroize();
         self.scalar = <k256::Scalar as elliptic_curve::Field>::ZERO;
@@ -424,28 +426,28 @@ impl ReconstructedKey {
     }
 }
 
-/// 완전한 개인키를 추출한다 (32바이트 big-endian).
+/// Exports the complete private key as 32 big-endian bytes.
 ///
-/// # 위험
+/// # Danger
 ///
-/// 이 순간 MPC의 이점이 사라진다. 상위 계층은 사용자에게 명시적으로 경고하고
-/// 확인을 받아야 한다 (`docs/export.md`).
+/// The MPC benefit disappears at this moment. Callers must warn the user explicitly and take a
+/// confirmation (`docs/export.md`).
 pub fn export_private_key(shares: &[&KeyShare]) -> Result<SecretKeyBytes> {
     let key = reconstruct(shares)?;
     Ok(SecretKeyBytes(key.to_bytes()))
 }
 
-/// 남은 셰어로부터 셰어 3개를 새로 발급한다 (리셰어).
+/// Issues a fresh set of three shares from the surviving ones (reshare).
 ///
-/// 셰어를 잃은 자리를 새 기기로 채울 때 쓴다. 업스트림 리프레시는 셰어를 이미
-/// 가진 파티만 참여할 수 있어 이 경우를 다룰 수 없다
-/// (`docs/adr/0004-mpc-library-reselection.md` 발견 3).
+/// Use it to fill the slot of a lost share on a new device. Upstream refresh only admits parties
+/// that already hold a share, so it cannot cover this case
+/// (`docs/adr/0004-mpc-library-reselection.md`, finding 3).
 ///
-/// # 위험
+/// # Danger
 ///
-/// 내부적으로 개인키를 복원했다가 즉시 다시 나눈다. 그 사이 개인키가 한 곳에
-/// 존재한다(SPOF). **사용자 기기에서만 호출한다.** 서버에서 호출해서는 안 된다.
-/// 공개키는 유지되므로 주소는 바뀌지 않는다.
+/// Internally this reconstructs the private key and immediately re-splits it. In between, the
+/// key exists in one place — a single point of failure. **Call it on the user's device only**,
+/// never on the server. The public key is preserved, so the address does not change.
 pub fn reshare(shares: &[&KeyShare], session_id: &[u8; 32]) -> Result<(Vec<KeyShare>, PublicKey)> {
     use dkls23_secp256k1::protocols::re_key::re_key;
 

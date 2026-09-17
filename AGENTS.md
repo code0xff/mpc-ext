@@ -1,74 +1,94 @@
 # AGENTS.md
 
-이 문서는 코딩 에이전트가 이 저장소에서 작업할 때 지켜야 할 **대전제**만 정의한다.
-세부 설계·절차·스펙은 `docs/` 아래 문서를 참조하고, 새로운 세부 내용은 여기가 아니라 `docs/`에 쓴다.
-`CLAUDE.md`는 이 파일의 심볼릭 링크다.
+This file defines only the **ground rules** for coding agents working in this repository.
+Detailed design, procedures and specifications live under `docs/`; write new detail there,
+not here. `CLAUDE.md` is a symlink to this file.
 
-## 1. 프로젝트 정체성
+## 1. What this project is
 
-- **mpc-ext**: MPC(DKLs23) 기반 2-of-3 키를 보관·사용하는 크롬 확장 + 협력 서버.
-- 웹 페이지가 확장을 통해 MPC 서명을 사용할 수 있게 하는 것이 목표다.
-- 확장·서버 **전부 오픈소스**(Apache-2.0). 비공개 구성요소에 의존하는 설계를 하지 않는다.
+- **mpc-ext**: a Chrome extension plus a cooperating server that hold a 2-of-3 threshold key
+  using MPC (DKLs23).
+- The goal is to let web pages sign through the extension.
+- **Both the extension and the server are open source** (Apache-2.0). Do not introduce designs
+  that depend on closed components.
 
-## 2. 아키텍처 대전제
+## 2. Architecture ground rules
 
-- 키 셰어는 3개를 **서로 다른 신뢰 영역에 하나씩** 둔다. 임계값은 2 (`docs/adr/0005-share-placement.md`).
-  - A — 확장 (암호화 저장)
-  - B — **저장하지 않음.** 생성 시 파일로 내보내 사용자가 오프라인 보관한다
-  - C — 서버
-- **평시 서명은 확장(A) + 서버(C)** 로 한다. 어느 한쪽이 장악되어도 셰어 하나뿐이라 서명할 수 없다.
-- **확장은 셰어를 둘 이상 저장하지 않는다.** 이 불변식을 깨는 변경은 ADR 없이 금지.
-- 복구 파일(B)은 기기 분실 복구와 **서버 장애 시 비상 서명**(A+B)에 쓴다. 서비스가 사라져도 자산이 잠기지 않아야 한다.
-- 사용자는 언제든 키를 **추출(export)** 할 수 있어야 한다. 잠금(vendor lock-in)은 금지. export/import는 기기 분실 대비 수단이기도 하므로 온보딩에서 유도한다.
-- 확장은 **기본 잠금 상태**이며 비밀번호로 해제한다. 생체인증(WebAuthn/passkey)은 후속 과제(`docs/roadmap.md`)로 둔다.
-- MPC 프로토콜 코어는 **Rust**로 한 번만 구현하고, 확장은 **wasm**으로, 서버는 **네이티브 crate**로 같은 코드를 쓴다. 프로토콜 로직을 두 언어로 중복 구현하지 않는다.
+- There are three key shares, **one per trust domain**. The threshold is 2
+  (`docs/adr/0005-share-placement.md`).
+  - A — the extension (encrypted at rest)
+  - B — **never stored.** Exported to a file at key creation and kept offline by the user
+  - C — the server
+- **Everyday signing is extension (A) + server (C).** Compromising either side alone yields a
+  single share, which cannot sign.
+- **The extension never stores more than one share.** Changing this invariant requires an ADR.
+- The recovery file (B) covers device loss and **emergency signing when the server is down**
+  (A+B). If the service disappears, funds must not be locked.
+- Users must be able to **export** their key at any time. No vendor lock-in. Export/import is
+  also the defence against device loss, so onboarding walks the user through it.
+- The extension is **locked by default** and opens with a password. Biometrics (WebAuthn /
+  passkeys) are deferred work (`docs/roadmap.md`).
+- The MPC protocol core is implemented **once, in Rust**. The extension consumes it as wasm and
+  the server as a native crate. Never reimplement protocol logic in a second language.
 
-## 3. 기술 스택 (변경은 ADR 필요)
+## 3. Stack (changes require an ADR)
 
-| 영역         | 선택                                                             |
-| ------------ | ---------------------------------------------------------------- |
-| MPC          | DKLs23 — `0xCarbon/DKLs23` (Apache-2.0/MIT) 기반 Rust, vendoring |
-| 확장         | TypeScript + React + Vite + WXT (Manifest V3)                    |
-| 서버         | Rust + axum + SQLite(sqlx), OpenAPI/Swagger UI                   |
-| 워크스페이스 | pnpm workspace (JS) + cargo workspace (Rust)                     |
+| Area       | Choice                                                        |
+| ---------- | ------------------------------------------------------------- |
+| MPC        | DKLs23 via `0xCarbon/DKLs23` (Apache-2.0/MIT), version-pinned |
+| Extension  | TypeScript + React + Vite + WXT (Manifest V3)                 |
+| Server     | Rust + axum + SQLite (sqlx), OpenAPI/Swagger UI               |
+| Workspaces | pnpm workspace (JS) + cargo workspace (Rust)                  |
 
-## 4. 보안 원칙 (타협 불가)
+## 4. Security principles (non-negotiable)
 
-- 키 셰어·시드·비밀번호를 **로그·에러 메시지·텔레메트리·URL에 절대 싣지 않는다.**
-- 비밀 값은 메모리에서 사용 후 zeroize하고, 평문으로 디스크에 쓰지 않는다.
-- 저장은 항상 사용자 비밀번호에서 유도한 키로 암호화한다(KDF 파라미터는 `docs/security.md`).
-- **직접 만든 암호 프리미티브를 쓰지 않는다.** 검증된 crate만 사용한다.
-- 신뢰 경계를 넘는 모든 입력(웹페이지 → content script → background, 클라이언트 → 서버)은 검증한다.
-- 서버는 셰어 1개만 갖고, 단독으로 서명하거나 키를 복원할 수 없어야 한다. 이를 깨는 변경은 금지.
-- 보안에 영향 있는 변경은 `docs/security.md`와 위협 모델을 함께 갱신한다.
+- **Never** put key shares, seeds or passwords into logs, error messages, telemetry or URLs.
+- Zeroize secrets after use; never write them to disk in the clear.
+- At rest, always encrypt with a key derived from the user's password (KDF parameters in
+  `docs/security.md`).
+- **Never roll your own crypto primitives.** Use vetted crates only.
+- Validate every input that crosses a trust boundary (web page → content script → background,
+  client → server).
+- The server holds a single share and must not be able to sign or reconstruct a key on its own.
+  Changes that break this are forbidden.
+- Security-relevant changes update `docs/security.md` and the threat model alongside the code.
 
-## 5. 오픈소스 활용
+## 5. Using open source
 
-- 검증된 오픈소스를 우선 사용하고, 직접 구현은 대안이 없을 때만 한다.
-- 신규 의존성은 라이선스(Apache-2.0/MIT/BSD 호환)와 유지보수 상태를 **도입 전에 원문으로 확인한다.** 배지·README·검색 결과를 신뢰하지 않는다. copyleft(GPL/AGPL/LGPL) 의존성은 도입하지 않는다.
-- 소스가 공개되어 있다고 오픈소스인 것이 아니다. 비상업·철회가능·재배포금지 조항이 있는 라이선스는 제외한다.
-- 의존성 추가 사유는 PR 설명에 남긴다.
+- Prefer vetted open source; implement it yourself only when there is no alternative.
+- For every new dependency, **read the licence text before adopting it** — do not trust badges,
+  READMEs or search results. No copyleft (GPL/AGPL/LGPL) dependencies.
+- Available source does not mean open source. Reject licences that are non-commercial,
+  revocable, or forbid redistribution.
+- Record the reason for each new dependency in the PR description.
 
-## 6. 개발 규율
+## 6. Development discipline
 
-- 작업 전 관련 `docs/` 문서를 읽고, 구현이 문서와 어긋나면 **문서를 먼저 고친다.**
-- 되돌리기 어려운 결정(스택 교체, 프로토콜 변경, 저장 포맷 변경)은 `docs/adr/`에 ADR로 남긴다.
-- 커밋 전 `make check`(fmt·lint·typecheck·test)가 통과해야 한다. 상세는 `docs/development.md`.
-- 커밋은 Conventional Commits. 브랜치는 `main`에서 분기하고 PR로 병합한다.
-- 암호·프로토콜 코드에는 테스트 없이 머지하지 않는다. 키 저장 포맷 변경 시 마이그레이션 테스트를 포함한다.
-- 비밀 값·실제 키를 저장소나 테스트 픽스처에 커밋하지 않는다. 항상 더미값을 쓴다.
-- `TODO`는 이슈 번호와 함께 남긴다.
+- **Write everything in English** — code, comments, doc comments, documentation, UI strings,
+  commit messages, PR descriptions. This is an open-source project with an international
+  audience.
+- Read the relevant `docs/` pages before starting. If the implementation and the documentation
+  disagree, **fix the documentation first.**
+- Record hard-to-reverse decisions (stack swaps, protocol changes, storage format changes) as
+  ADRs under `docs/adr/`.
+- `make check` (fmt, lint, typecheck, test) must pass before committing. See
+  `docs/development.md`.
+- Use Conventional Commits. Branch from `main` and merge through pull requests.
+- Never merge crypto or protocol code without tests. Include migration tests whenever the key
+  storage format changes.
+- Never commit real secrets or keys, including in test fixtures. Always use dummy values.
+- Leave `TODO`s only with an issue number.
 
-## 7. 문서 지도
+## 7. Map of the documentation
 
-- `docs/architecture.md` — 컴포넌트, 키 셰어 배치, 신뢰 경계
-- `docs/protocol.md` — DKLs23 DKG/서명/리프레시 흐름, 메시지 포맷
-- `docs/security.md` — 위협 모델, 저장·암호화, 잠금/해제
-- `docs/recovery.md` — 셰어 분실 시 복구 절차
-- `docs/export.md` — 키 추출 포맷과 절차
-- `docs/web-api.md` — 웹페이지가 쓰는 provider API
-- `docs/server.md` — 서버 API, 배포, 운영
-- `docs/development.md` — 개발 환경, 빌드, 도구, 품질 게이트
-- `docs/audit.md` — 외부 보안 감사 계획
-- `docs/roadmap.md` — 단계별 계획과 후속 과제(생체인증 포함)
-- `docs/adr/` — 아키텍처 결정 기록 (셰어 배치는 `0005`)
+- `docs/architecture.md` — components, share placement, trust boundaries
+- `docs/protocol.md` — DKLs23 DKG/signing/refresh flows, message formats
+- `docs/security.md` — threat model, storage and encryption, locking
+- `docs/recovery.md` — what to do when a share is lost
+- `docs/export.md` — key export formats and procedures
+- `docs/web-api.md` — the provider API web pages use
+- `docs/server.md` — server API, deployment, operations
+- `docs/development.md` — environment, builds, tooling, quality gates
+- `docs/audit.md` — external security audit plan
+- `docs/roadmap.md` — phased plan and deferred work (including biometrics)
+- `docs/adr/` — architecture decision records (share placement is `0005`)

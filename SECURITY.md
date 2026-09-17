@@ -1,32 +1,37 @@
-# 보안 정책
+# Security Policy
 
-## 현재 상태
+## Current status
 
-이 프로젝트는 **보안 감사를 받지 않았습니다. 실자산에 사용하지 마세요.**
+This project **has not been audited. Do not use it with real assets.**
 
-## 취약점 신고
+## Reporting a vulnerability
 
-취약점을 발견하면 **공개 이슈로 등록하지 말고** GitHub Security Advisory
-(`Security` 탭 → `Report a vulnerability`)로 비공개 신고해 주세요.
+If you find a vulnerability, please **do not open a public issue.** Report it privately through
+GitHub Security Advisories (`Security` tab → `Report a vulnerability`).
 
-- 영업일 기준 3일 안에 접수를 확인합니다.
-- 수정 후 신고자와 조율하여 공개합니다. 원하시면 크레딧을 표기합니다.
+- We acknowledge reports within three business days.
+- We coordinate disclosure with you after a fix lands, and will credit you if you want that.
 
-## 범위
+## In scope
 
-취약점으로 취급합니다:
+We treat these as vulnerabilities:
 
-- 서버가 단독으로 서명하거나 개인키를 복원할 수 있는 경우
-- 사용자 승인 없이 서명이 발생하는 경로
-- 키 셰어·비밀번호가 로그·에러·저장소에 평문으로 남는 경우
-- 복구 절차를 우회해 서버 셰어를 얻을 수 있는 경우
-- 잠금 상태의 확장에서 셰어를 추출할 수 있는 경우
+- The server being able to sign or reconstruct the private key on its own
+- Any path that produces a signature without user approval
+- Key shares or passwords surviving in logs, errors or storage in the clear
+- Obtaining the server share by bypassing the recovery procedure
+- Extracting a share from a locked extension
 
-범위 밖입니다 (`docs/security.md`의 위협 모델 참조):
+## Out of scope
 
-- 루팅된 OS, 커널 레벨 키로거, 물리적 강압
-- **잠금 해제 상태의 확장을 장악한 공격자** — 설계상 두 셰어를 모두 얻습니다. 알려진 한계이며 문서에 명시되어 있습니다.
+See the threat model in `docs/security.md`:
 
-## 비밀 값 제보 시
+- A rooted OS, kernel-level keyloggers, physical coercion
+- **An attacker who has taken over an unlocked extension** — by design they hold a single share
+  and cannot sign. Combining it with a recovery file stored on the same machine is a documented
+  user-side risk, not a vulnerability.
 
-신고에 실제 키·시드·비밀번호를 포함하지 마세요. 재현 절차와 더미값으로 충분합니다.
+## Please do not send us secrets
+
+Do not include real keys, seeds or passwords in a report. Reproduction steps and dummy values
+are enough.

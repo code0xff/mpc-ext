@@ -1,62 +1,77 @@
-# 보안
+# Security
 
-## 위협 모델
+## Threat model
 
-| 위협                                    | 대응                                                      |
-| --------------------------------------- | --------------------------------------------------------- |
-| 악성 웹페이지가 서명 유도               | origin 검증 + 사용자 명시 승인 + 서명 내용 표시           |
-| 서버 침해                               | 서버는 셰어 1개만 보유. 단독 서명·복원 불가               |
-| 기기 도난 (확장 데이터 탈취, 잠금 상태) | 저장소 전체 암호화, 비밀번호 없이는 무의미                |
-| **확장 장악 (잠금 해제 상태)**          | **대응 불가 — 아래 "MPC가 주지 않는 것" 참조**            |
-| 확장 셰어 1개 분실                      | 서버 셰어로 복구 (`recovery.md`)                          |
-| 공급망 공격                             | 의존성 최소화, lockfile 고정, 재현 가능 빌드, 릴리스 서명 |
-| 메모리 스크래핑                         | 사용 후 zeroize, 유휴 시 자동 잠금                        |
+| Threat                                           | Mitigation                                                                                                                                                   |
+| ------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| A malicious page tricks the user into signing    | Origin checks, explicit user approval, and the signing payload shown in the UI                                                                               |
+| Server compromise                                | The server holds only share C. It cannot sign or reconstruct alone                                                                                           |
+| Device theft (extension data taken while locked) | Storage is fully encrypted and useless without the password                                                                                                  |
+| **Extension taken over while unlocked**          | The extension holds only share A, so it **cannot sign alone.** The server acts as the second factor with rate limits, anomaly blocking and user confirmation |
+| Recovery file stolen                             | Only share B. Cannot sign alone                                                                                                                              |
+| Service shutdown or outage                       | The user signs with A + B. Funds are not locked                                                                                                              |
+| Supply chain attack                              | Minimal dependencies, pinned lockfiles, reproducible builds, signed releases                                                                                 |
+| Memory scraping                                  | Zeroize after use, auto-lock when idle                                                                                                                       |
 
-**범위 밖**: 루팅된 OS, 커널 레벨 키로거, 물리적 강압.
+**Out of scope**: a rooted OS, kernel-level keyloggers, physical coercion.
 
-## 감수하는 것 (정직한 고지)
+## What we gave up (stated plainly)
 
-셰어를 세 신뢰 영역에 하나씩 나눈 대가로 다음을 내준다
+Splitting the shares across three trust domains costs us the following
 ([adr/0005](adr/0005-share-placement.md)).
 
-- **서버가 모든 서명에 관여한다.** 서버는 사용자가 무엇에 서명하는지 보게 되고, 서버가 내려가면 평시 서명이 불가능하다. 검열 가능성도 생긴다. 완화책은 자체 호스팅 가능성과 A + B 비상 경로다.
-- **서명마다 네트워크 왕복이 필요하다.** 계산 자체는 16 ms지만 체감 지연은 왕복이 지배한다.
+- **The server takes part in every signature.** It learns what the user signs, everyday signing
+  stops when it is down, and censorship becomes possible. The mitigations are self-hosting and
+  the A + B fallback path.
+- **Every signature needs a network round trip.** The computation itself is ~16 ms, but
+  perceived latency is dominated by the round trip.
 
-그리고 사용자가 깨뜨릴 수 있는 전제가 하나 있다.
+Two assumptions the user can break:
 
-- **확장과 복구 파일을 같은 기기에 두면 셰어 두 개가 한곳에 모인다.** 그 기기가 장악되면 서명이 가능해진다. UI는 다른 기기·인쇄물·금고 등 분리 보관을 강하게 안내하고, 같은 기기의 기본 다운로드 폴더에 방치하지 않도록 경고한다.
-- **복구 파일을 잃고 기기도 잃으면 복구할 수 없다.** 서버 셰어 하나만 남기 때문이다. 온보딩에서 명확히 고지한다.
+- **Keeping the recovery file on the same machine as the extension** puts two shares in one
+  place, and taking over that machine makes signing possible. The UI pushes hard for separate
+  storage — another device, print, a safe — and warns against leaving it in the default
+  downloads folder.
+- **Losing the recovery file and the device together is unrecoverable**, because only the server
+  share remains. Onboarding says so explicitly.
 
-이 한계들을 마케팅·README·UI에서 숨기지 않는다.
+We do not hide these limits in marketing, the README or the UI.
 
-## 저장
+## Storage
 
-- 암호화: XChaCha20-Poly1305 (AEAD).
-- KDF: Argon2id. 파라미터는 코드 상수로 고정하고 변경 시 ADR + 마이그레이션.
-- 솔트/논스는 레코드마다 새로 생성한다. 논스 재사용 금지.
-- 저장 레코드에 `format_version`을 넣고, 변경 시 마이그레이션 테스트를 추가한다.
-- `chrome.storage.local`에 암호문만 저장한다. 평문 셰어는 절대 저장하지 않는다.
+- Encryption: XChaCha20-Poly1305 (AEAD) is the target. The extension currently ships PBKDF2 +
+  AES-GCM via WebCrypto; migrating is a hardening task tracked in `roadmap.md`.
+- KDF: Argon2id is the target; parameters are pinned as constants and changing them needs an ADR
+  plus a migration.
+- Fresh salt and nonce per record. Never reuse a nonce.
+- Records carry a `format_version`; every change ships a migration test.
+- Only ciphertext goes into `chrome.storage.local`. Plaintext shares are never stored.
 
-## 잠금 / 해제
+## Locking and unlocking
 
-- 기본 상태는 **잠김**. 비밀번호 입력으로 해제한다.
-- 복호화된 셰어 A는 service worker 메모리에만 존재한다.
-- **셰어 B는 저장하지 않는다.** DKG 직후 내보내고 메모리에서 zeroize한다. 내보내기를 건너뛰면 키 생성이 완료되지 않는다.
-- 유휴 타임아웃(기본 5분), 브라우저 종료, 워커 종료 시 자동 잠금.
-- 비밀번호 시도 횟수를 제한하고 지수 백오프를 적용한다.
-- 생체인증(WebAuthn / passkey PRF)은 후속 과제.
+- The default state is **locked**; a password opens it.
+- The decrypted share A exists only in service worker memory.
+- **Share B is never stored.** It is exported right after DKG and zeroized. Onboarding cannot be
+  skipped — nothing is persisted until the export is confirmed, so a failure leaves no trace.
+- Auto-lock on idle timeout (5 minutes by default), browser shutdown, or worker termination.
+- Limit password attempts and apply exponential backoff.
+- Biometric unlock (WebAuthn / passkey PRF) is deferred work.
 
-## 코딩 규칙
+## Coding rules
 
-- 비밀 값 타입은 `Debug`/`Display`에서 내용을 가리고, `Drop`에서 zeroize한다.
-- 비밀 비교는 상수 시간 비교를 쓴다.
-- 비밀은 로그·에러 메시지·URL·텔레메트리에 절대 넣지 않는다. 텔레메트리는 기본 비활성.
-- 직접 만든 암호 프리미티브 금지.
-- 상수 시간 연산을 보장하지 않는 암호 라이브러리를 도입할 때는 그 사실과 영향 범위를 본 문서에 기록한다.
+- Secret types hide their contents in `Debug`/`Display` and zeroize on `Drop`.
+- Compare secrets in constant time.
+- Never put secrets in logs, error messages, URLs or telemetry. Telemetry is off by default.
+- Never roll your own crypto primitives.
+- When adopting a crypto library that does not guarantee constant-time operation, record that
+  fact and its blast radius here.
 
-## 감사
+## Audit
 
-- 1.0 이전에 외부 보안 감사를 받는다. 감사 대상 커밋과 결과는 저장소에 공개한다.
-- **감사 범위에 vendoring한 MPC crate(`0xCarbon/DKLs23`)를 포함한다.** 업스트림에 감사 이력이 없으므로 우리가 비용을 부담한다 ([adr/0004](adr/0004-mpc-library-reselection.md)).
-- 감사 완료 전까지 README와 확장 UI에 **실자산 사용 비권장** 경고를 표시한다.
-- 취약점 신고 절차는 `SECURITY.md`.
+- Get an external audit before 1.0. Publish the audited commit and the report in this
+  repository.
+- **The audit scope includes the vendored MPC crate** (`0xCarbon/DKLs23`). Upstream has no audit
+  history, so we pay for it ([adr/0004](adr/0004-mpc-library-reselection.md)). Details in
+  [audit.md](audit.md).
+- Until the audit is done, the README and the extension UI carry a **do not use with real
+  assets** warning.

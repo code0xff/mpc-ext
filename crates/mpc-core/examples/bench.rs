@@ -1,18 +1,18 @@
-//! 프로토콜 실측. ADR-0004의 합격 기준을 확인한다.
+//! Protocol measurements against the budgets in ADR-0004.
 //!
-//! 실행: `cargo run --release -p mpc-core --example bench`
+//! Run with `cargo run --release -p mpc-core --example bench`.
 //!
-//! 네이티브 수치는 하한선이다. 브라우저 wasm은 이보다 느리므로, 여기서 기준을
-//! 넘지 못하면 wasm에서도 넘지 못한다.
+//! Native numbers are a lower bound: browser wasm is slower, so anything that misses a budget
+//! here will miss it there too.
 
-// 테스트에서 panic은 단언 수단이다. 프로덕션 코드에는 이 lint가 그대로 적용된다.
+// Panicking is how a benchmark reports failure. Production code keeps these lints.
 #![allow(clippy::expect_used, clippy::unwrap_used, clippy::panic)]
 
 use std::time::Instant;
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let rounds = 5;
-    println!("2-of-3 DKLs23 · {rounds}회 평균 (네이티브 release)\n");
+    println!("2-of-3 DKLs23, mean of {rounds} runs (native release)\n");
 
     let mut dkg_total = 0.0;
     let mut sign_total = 0.0;
@@ -33,7 +33,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
         assert!(
             mpc_core::verify(&public_key, &digest, &signature)?,
-            "서명 검증 실패"
+            "signature failed to verify"
         );
 
         let t = Instant::now();
@@ -42,17 +42,17 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
 
     let n = f64::from(rounds);
-    report("DKG (3파티)", dkg_total / n, 10.0);
-    report("서명 (2파티)", sign_total / n, 1.0);
-    report("리프레시 (3파티)", refresh_total / n, 30.0);
+    report("DKG (3 parties)", dkg_total / n, 10.0);
+    report("Signing (2 parties)", sign_total / n, 1.0);
+    report("Refresh (3 parties)", refresh_total / n, 30.0);
 
     Ok(())
 }
 
 fn report(label: &str, secs: f64, budget: f64) {
-    let verdict = if secs <= budget { "통과" } else { "초과" };
+    let verdict = if secs <= budget { "pass" } else { "OVER" };
     println!(
-        "{label:<18} {:>8.1} ms   (기준 {:.0}s · {verdict})",
+        "{label:<20} {:>8.1} ms   (budget {:.0}s, {verdict})",
         secs * 1000.0,
         budget
     );

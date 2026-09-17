@@ -1,47 +1,66 @@
-# 개발
+# Development
 
-## 요구 도구
+## Required tooling
 
-- Node LTS + pnpm (corepack)
-- Rust stable + `wasm32-unknown-unknown` 타겟, `wasm-pack`
-- `just` 또는 `make` (본 문서는 `make` 기준)
+- Node LTS and pnpm (via corepack)
+- Rust stable with the `wasm32-unknown-unknown` target, plus `wasm-pack`
+- `make`
+- Chrome for Testing, for the extension smoke test
+  (`pnpm dlx @puppeteer/browsers install chrome@stable`). Chrome 137 and later ignore
+  `--load-extension` in the regular browser, so automation needs this build.
 
-## 레이아웃
+## Layout
 
 ```
 crates/mpc-core   crates/mpc-wasm   crates/mpc-server
 packages/extension   packages/sdk
 ```
 
-pnpm workspace + cargo workspace를 루트에 둔다.
+A pnpm workspace and a cargo workspace share the repository root.
 
-## 명령
+## Commands
 
-| 명령         | 내용                                                 |
-| ------------ | ---------------------------------------------------- |
-| `make setup` | 의존성 설치, 훅 설치                                 |
-| `make build` | wasm 빌드 → 확장 빌드 → 서버 빌드                    |
-| `make test`  | cargo test + vitest                                  |
-| `make lint`  | clippy + eslint                                      |
-| `make fmt`   | rustfmt + prettier                                   |
-| `make check` | fmt 검사 + lint + typecheck + test (**커밋 게이트**) |
+| Command        | What it does                                              |
+| -------------- | --------------------------------------------------------- |
+| `make setup`   | Install dependencies and register git hooks               |
+| `make build`   | Build wasm → extension → server                           |
+| `make test`    | `cargo test` plus vitest                                  |
+| `make lint`    | clippy plus eslint                                        |
+| `make fmt`     | rustfmt plus prettier                                     |
+| `make openapi` | Regenerate `docs/openapi.json`                            |
+| `make check`   | fmt check + lint + typecheck + test (**the commit gate**) |
 
-## 품질 도구
+The extension also has `pnpm -C packages/extension smoke`, which loads the built extension into
+Chrome for Testing and exercises DKG, onboarding and unlocking inside the real MV3 service
+worker.
 
-- **Rust**: rustfmt, clippy (`-D warnings`), `cargo deny` (라이선스·취약점), `cargo audit`
-- **TS**: TypeScript strict, ESLint (typescript-eslint), Prettier, vitest
-- **공통**: lefthook pre-commit(fmt+lint), pre-push(test), gitleaks 시크릿 스캔
-- **CI**: GitHub Actions에서 `make check` + `cargo deny` + gitleaks. 통과 없이 머지 금지.
-- 의존성 업데이트는 Dependabot/Renovate로 자동화한다.
+## Quality tooling
 
-## 규칙
+- **Rust**: rustfmt, clippy (`-D warnings`, with `unwrap_used`/`expect_used`/`panic` denied in
+  production code), `cargo deny` for licences and advisories
+- **TypeScript**: strict `tsc`, ESLint (typescript-eslint), Prettier, vitest
+- **Shared**: lefthook pre-commit (fmt, lint) and pre-push (test), gitleaks secret scanning
+- **CI**: GitHub Actions runs the same gate plus the wasm build, the MV3 smoke test,
+  `cargo deny` and gitleaks. Nothing merges without it.
+- Dependency updates are automated with Dependabot, except the pinned MPC crate
+  ([adr/0004](adr/0004-mpc-library-reselection.md)).
 
-- 커밋 메시지는 Conventional Commits (`feat:`, `fix:`, `docs:`, `chore:`…).
-- `main` 직접 푸시 금지. PR + 리뷰.
-- 새 경고를 남긴 채 머지하지 않는다.
-- 암호·프로토콜 코드는 테스트 없이 머지하지 않는다.
-- 실제 키·시크릿을 픽스처에 넣지 않는다. 항상 더미값.
+## Test performance
 
-## 재현 가능 빌드
+Dependencies are compiled with `opt-level = 3` even in dev and test profiles
+(`[profile.test.package."*"]`). DKG in an unoptimised build is tens of times slower, which made
+the suite painful; our own code keeps its debug information.
 
-확장 릴리스는 재현 가능해야 한다. 툴체인 버전을 고정하고, 빌드 절차와 산출물 해시를 릴리스 노트에 남긴다.
+## Rules
+
+- Commit messages follow Conventional Commits.
+- Write everything — code, comments, docs, UI strings, commits — **in English**.
+- No direct pushes to `main`. Use pull requests.
+- Never merge leaving new warnings behind.
+- Never merge crypto or protocol code without tests.
+- Never put real keys or secrets in fixtures. Use dummy values.
+
+## Reproducible builds
+
+Extension releases must be reproducible. Pin toolchain versions and publish the build procedure
+and artefact hashes in the release notes.

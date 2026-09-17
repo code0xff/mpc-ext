@@ -1,4 +1,4 @@
-# getrandom 0.4는 wasm32-unknown-unknown에서 백엔드를 명시해야 한다.
-# 브라우저의 Web Crypto를 쓴다.
+# getrandom 0.4 needs an explicit backend on wasm32-unknown-unknown.
+# Use the browser's Web Crypto.
 [target.wasm32-unknown-unknown]
 rustflags = ['--cfg', 'getrandom_backend="wasm_js"']

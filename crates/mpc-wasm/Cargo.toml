@@ -1,6 +1,6 @@
 [package]
 name = "mpc-wasm"
-description = "mpc-core의 wasm 바인딩. 크롬 확장이 사용한다."
+description = "wasm bindings for mpc-core, consumed by the Chrome extension"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
@@ -14,7 +14,7 @@ crate-type = ["cdylib", "rlib"]
 mpc-core.workspace = true
 wasm-bindgen = "0.2"
 
-# 브라우저에서는 getrandom이 Web Crypto를 쓰도록 해야 한다.
+# In the browser, getrandom has to use Web Crypto.
 [target.'cfg(target_arch = "wasm32")'.dependencies]
 getrandom = { version = "0.4", features = ["wasm_js"] }
 

@@ -1,29 +1,30 @@
-# ADR-0003: 서버 저장소
+# ADR-0003: Server storage
 
-- 상태: 승인
-- 날짜: 2026-09-16
+- Status: accepted
+- Date: 2026-09-16
 
-## 맥락
+## Context
 
-서버는 셰어 C, DKG 세션 상태, 복구 요청, 감사 로그를 보관한다.
-자체 호스팅이 쉬워야 하고(오픈소스 프로젝트), DKG 완료나 키 리프레시처럼
-여러 단계를 거치는 작업이 반쪽 상태로 남지 않아야 한다.
+The server stores share C, in-flight DKG session state, recovery requests and an audit log. It
+has to be easy to self-host (this is an open-source project), and multi-step operations such as
+completing a DKG or refreshing a key must not be left half-finished.
 
-## 검토한 선택지
+## Options considered
 
-| 선택지          | 장점                                                                          | 단점                                                                  |
-| --------------- | ----------------------------------------------------------------------------- | --------------------------------------------------------------------- |
-| SQLite (`sqlx`) | 파일 하나, 외부 의존성 없음, 트랜잭션, 마이그레이션 도구, 감사 로그 조회 가능 | 단일 노드. 수평 확장 불가                                             |
-| 파일 저장       | 가장 단순                                                                     | 원자성·마이그레이션·조회를 전부 직접 구현. DKG 중단 시 반쪽 상태 위험 |
-| Postgres        | 확장성, 운영 도구 성숙                                                        | 자체 호스팅 진입 장벽. 초기 규모에 과함                               |
+| Option          | Pros                                                                                   | Cons                                                                                 |
+| --------------- | -------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------ |
+| SQLite (`sqlx`) | One file, no external dependency, transactions, migration tooling, queryable audit log | Single node; no horizontal scaling                                                   |
+| Flat files      | Simplest possible                                                                      | Atomicity, migrations and queries all hand-rolled; a half-written DKG is a real risk |
+| Postgres        | Scales, mature operational tooling                                                     | Raises the bar for self-hosting; overkill at this size                               |
 
-## 결정
+## Decision
 
-**SQLite + `sqlx`**. 셰어는 애플리케이션 레벨에서 암호화한 BLOB으로 저장하고,
-암호화 키는 환경변수/KMS에서 주입한다.
+**SQLite with `sqlx`.** Shares are stored as application-encrypted blobs, and the encryption key
+is injected from an environment variable or a KMS.
 
-## 결과
+## Consequences
 
-- 서버는 단일 인스턴스 전제로 시작한다. 다중 인스턴스가 필요해지면 Postgres로 전환한다.
-- `sqlx`를 쓰면 쿼리 대부분이 그대로 Postgres로 이식되므로 전환 비용이 낮다.
-- DB가 침해되어도 암호화 키 없이는 셰어를 쓸 수 없다. 따라서 DB 파일과 키를 같은 곳에 백업하면 안 된다.
+- The server starts out assuming a single instance. If we need several, we move to Postgres.
+- Because we use `sqlx`, most queries port to Postgres unchanged, so switching stays cheap.
+- A stolen database is useless without the encryption key — which is exactly why the database
+  file and the key must not be backed up to the same place.

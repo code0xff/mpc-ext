@@ -41,16 +41,16 @@ export function App() {
     <main>
       <header>
         <h1>mpc-ext</h1>
-        <p className="warn">감사 전입니다. 실자산에 사용하지 마세요.</p>
+        <p className="warn">Unaudited. Do not use with real assets.</p>
       </header>
 
       <section>
-        <h2>상태</h2>
+        <h2>Status</h2>
         <dl>
-          <dt>지갑</dt>
-          <dd id="wallet-status">{status ? describe(status) : '확인 중…'}</dd>
-          <dt>MPC 엔진</dt>
-          <dd>{health ? `${health.config} · ${health.loadMs}ms에 로드` : '확인 중…'}</dd>
+          <dt>Wallet</dt>
+          <dd id="wallet-status">{status ? describe(status) : 'Checking…'}</dd>
+          <dt>MPC engine</dt>
+          <dd>{health ? `${health.config}, loaded in ${health.loadMs} ms` : 'Checking…'}</dd>
         </dl>
       </section>
 
@@ -69,14 +69,14 @@ export function App() {
 
       {status?.kind === 'awaitingRecoveryExport' && created && (
         <section className="callout">
-          <h2>복구 파일을 저장하세요</h2>
+          <h2>Save your recovery file</h2>
           <p>
-            이 파일은 <b>지금만</b> 만들 수 있습니다. 확장은 이 셰어를 저장하지 않습니다. 기기를
-            잃거나 서버가 멈추면 이 파일이 유일한 수단입니다.
+            This file can only be created <b>right now</b>. The extension does not store this share.
+            If you lose your device, or the server goes away, this file is the only way back.
           </p>
           <p className="warn">
-            확장과 <b>다른 곳</b>에 보관하세요. 같은 기기에 두면 이 설계의 의미가 사라집니다. 파일은
-            잃어버리기 쉬우니 복사본을 여러 곳에 두세요.
+            Keep it <b>somewhere other than</b> this machine. Storing it alongside the extension
+            defeats the design. Files are easy to lose, so keep several copies.
           </p>
           <button
             type="button"
@@ -86,7 +86,7 @@ export function App() {
               setDownloaded(true);
             }}
           >
-            복구 파일 내려받기 (약 230 KB)
+            Download recovery file (about 230 KB)
           </button>
           <button
             type="button"
@@ -100,7 +100,7 @@ export function App() {
               })
             }
           >
-            {downloaded ? '저장했습니다 — 지갑 사용 시작' : '먼저 파일을 내려받으세요'}
+            {downloaded ? 'I saved it — start using the wallet' : 'Download the file first'}
           </button>
           <button
             type="button"
@@ -113,7 +113,7 @@ export function App() {
               })
             }
           >
-            취소하고 처음부터
+            Cancel and start over
           </button>
         </section>
       )}
@@ -131,9 +131,9 @@ export function App() {
 
       {status?.kind === 'unlocked' && (
         <section>
-          <h2>지갑</h2>
+          <h2>Wallet</h2>
           <p className="mono">{status.publicKeyHex}</p>
-          <p>서명은 서버 연동(Phase 3) 이후에 동작합니다.</p>
+          <p>Signing becomes available once the server integration lands.</p>
           <button
             type="button"
             id="lock"
@@ -144,7 +144,7 @@ export function App() {
               })
             }
           >
-            잠그기
+            Lock
           </button>
         </section>
       )}
@@ -168,12 +168,12 @@ function CreateKey({ busy, onCreate }: { busy: boolean; onCreate: (password: str
 
   return (
     <section>
-      <h2>키 만들기</h2>
+      <h2>Create a key</h2>
       <p>
-        셰어 3개를 만듭니다. 확장은 <b>하나만</b> 보관하고, 하나는 복구 파일로 내보내며, 나머지
-        하나는 서버가 갖습니다.
+        This creates three shares. The extension keeps <b>one</b>, one is exported as your recovery
+        file, and the server holds the last one.
       </p>
-      <label htmlFor="password">비밀번호 (8자 이상)</label>
+      <label htmlFor="password">Password (8 characters or more)</label>
       <input
         id="password"
         type="password"
@@ -181,7 +181,7 @@ function CreateKey({ busy, onCreate }: { busy: boolean; onCreate: (password: str
         autoComplete="new-password"
         onChange={(event) => setPassword(event.target.value)}
       />
-      <label htmlFor="password-confirm">비밀번호 확인</label>
+      <label htmlFor="password-confirm">Confirm password</label>
       <input
         id="password-confirm"
         type="password"
@@ -189,15 +189,15 @@ function CreateKey({ busy, onCreate }: { busy: boolean; onCreate: (password: str
         autoComplete="new-password"
         onChange={(event) => setConfirmation(event.target.value)}
       />
-      {tooShort && <p className="error">8자 이상 입력하세요.</p>}
-      {mismatched && <p className="error">비밀번호가 일치하지 않습니다.</p>}
+      {tooShort && <p className="error">Use at least 8 characters.</p>}
+      {mismatched && <p className="error">The passwords do not match.</p>}
       <button
         type="button"
         id="create-key"
         disabled={!ready || busy}
         onClick={() => onCreate(password)}
       >
-        {busy ? '생성 중… (몇 초 걸립니다)' : '키 생성'}
+        {busy ? 'Creating… (this takes a few seconds)' : 'Create key'}
       </button>
     </section>
   );
@@ -208,8 +208,8 @@ function Unlock({ busy, onUnlock }: { busy: boolean; onUnlock: (password: string
 
   return (
     <section>
-      <h2>잠금 해제</h2>
-      <label htmlFor="unlock-password">비밀번호</label>
+      <h2>Unlock</h2>
+      <label htmlFor="unlock-password">Password</label>
       <input
         id="unlock-password"
         type="password"
@@ -226,7 +226,7 @@ function Unlock({ busy, onUnlock }: { busy: boolean; onUnlock: (password: string
         disabled={!password || busy}
         onClick={() => onUnlock(password)}
       >
-        열기
+        Unlock
       </button>
     </section>
   );
@@ -235,12 +235,12 @@ function Unlock({ busy, onUnlock }: { busy: boolean; onUnlock: (password: string
 function describe(status: Status): string {
   switch (status.kind) {
     case 'uninitialized':
-      return '아직 키가 없습니다';
+      return 'No key yet';
     case 'awaitingRecoveryExport':
-      return '복구 파일 저장 대기 중';
+      return 'Waiting for the recovery file to be saved';
     case 'locked':
-      return '잠김';
+      return 'Locked';
     case 'unlocked':
-      return `열림 · ${status.publicKeyHex.slice(0, 16)}…`;
+      return `Unlocked — ${status.publicKeyHex.slice(0, 16)}…`;
   }
 }

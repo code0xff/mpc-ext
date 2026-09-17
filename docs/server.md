@@ -1,92 +1,96 @@
-# 서버
+# Server
 
-## 역할
+## Role
 
-- 셰어 C 1개를 보관한다.
-- DKG 시 파티로 참여한다.
-- **평시 서명에 참여한다** — 확장(A)과 함께 2-of-3을 이룬다 ([adr/0005](adr/0005-share-placement.md)).
-- 복구 모드 서명에 참여한다.
+- Stores share C.
+- Joins DKG as a party.
+- **Takes part in everyday signing** — together with the extension (A) it forms the 2-of-3
+  ([adr/0005](adr/0005-share-placement.md)).
+- Takes part in recovery-mode signing.
 
-서버는 보관소가 아니라 **두 번째 요소**다. 확장이 장악되어도 서버가 거부하면 서명이
-만들어지지 않는다. 따라서 서버는 다음을 강제할 수 있어야 한다.
+The server is not a vault, it is a **second factor**. If the extension is compromised and the
+server refuses, no signature is produced. So the server must be able to enforce:
 
-- 요청당 rate limit과 이상 징후 차단
-- 필요 시 사용자 확인 (등록된 채널로 승인 요청)
-- 서명 요청 감사 로그 (서명 대상 해시만, 비밀 값 제외)
+- Per-request rate limits and anomaly blocking
+- User confirmation when needed (approval request over a registered channel)
+- An audit log of signing requests (the digest only, never secrets)
 
-동시에 서버는 사용자가 무엇에 서명하는지 보게 된다. 이 프라이버시 비용은 의도적으로
-감수한 것이며 `security.md`에 명시되어 있다.
+At the same time the server learns what the user signs. That privacy cost is deliberate and
+documented in `security.md`.
 
-## 스택
+## Stack
 
-- Rust + axum. `mpc-core` crate를 네이티브로 사용한다 (확장 wasm과 동일 코드).
-- 저장소: **SQLite** (`sqlx`, 컴파일 타임 쿼리 검증 + 마이그레이션).
-- API 문서: **`utoipa` + Swagger UI**. 핸들러 어노테이션에서 OpenAPI 스펙을 생성한다.
+- Rust + axum. Uses the `mpc-core` crate natively — the same code the extension runs as wasm.
+- Storage: **SQLite** via `sqlx` (compile-time query checking plus migrations).
+- API docs: **`utoipa` + Swagger UI**, generated from handler annotations.
 
-## 저장소
+## Storage
 
-SQLite 파일 하나. 외부 의존성 없이 자체 호스팅이 가능하고, DKG/복구처럼 여러 단계를 거치는
-작업을 트랜잭션으로 원자적으로 처리할 수 있어 채택했다. 배경은 [adr/0003-server-storage.md](adr/0003-server-storage.md).
+A single SQLite file. It is easy to self-host with no external dependencies, and multi-step
+operations such as DKG and recovery commit atomically inside a transaction. Background in
+[adr/0003](adr/0003-server-storage.md).
 
-테이블 개요:
+Tables:
 
-| 테이블              | 내용                                                                   |
-| ------------------- | ---------------------------------------------------------------------- |
-| `key_shares`        | 셰어 C의 **암호문** BLOB, 공개키, `format_version`, 생성/리프레시 시각 |
-| `dkg_sessions`      | 진행 중 DKG 세션 상태, 만료 시각                                       |
-| `recovery_requests` | 복구 요청, 지연 기간 만료 시각, 상태                                   |
-| `audit_log`         | append-only 감사 로그                                                  |
+| Table               | Contents                                                                               |
+| ------------------- | -------------------------------------------------------------------------------------- |
+| `key_shares`        | The **ciphertext** of share C, public key, `format_version`, timestamps                |
+| `dkg_sessions`      | The **sealed** party state of an in-flight DKG, plus an expiry (10 minutes by default) |
+| `recovery_requests` | Recovery requests, cooling-off expiry, status                                          |
+| `audit_log`         | Append-only audit log                                                                  |
 
-규칙:
+Rules:
 
-- 셰어는 **애플리케이션 레벨에서 암호화한 뒤** 저장한다. DB는 평문 셰어를 보지 않는다.
-- 암호화 키는 환경변수 또는 KMS에서 주입한다. 저장소나 DB에 두지 않는다.
-- 스키마 변경은 `sqlx` 마이그레이션 파일로 관리하고, 되돌릴 수 없는 변경은 ADR을 남긴다.
-- 세션·복구 레코드는 만료 후 정리한다. 감사 로그는 남긴다.
-- 모든 다단계 작업(DKG 완료, 리프레시)은 단일 트랜잭션으로 커밋한다. 반쪽 상태를 남기지 않는다.
+- Shares are **encrypted by the application before storage**. The database never sees a plaintext
+  share.
+- The sealing key is injected from an environment variable or a KMS. It never lives in the repo
+  or the database.
+- Schema changes go through `sqlx` migrations; irreversible ones get an ADR.
+- Session and recovery records are swept after they expire. Audit entries are kept.
+- Every multi-step operation (DKG completion, refresh) commits in one transaction, so no
+  half-finished state survives.
 
-## API (개요)
+## API
 
-| 엔드포인트                  | 용도                       |
-| --------------------------- | -------------------------- |
-| `POST /v1/dkg/session`      | DKG 세션 개시              |
-| `POST /v1/dkg/round`        | DKG 라운드 메시지 교환     |
-| `POST /v1/sign/session`     | 평시 서명 세션 개시        |
-| `POST /v1/sign/round`       | 서명 라운드 메시지 교환    |
-| `POST /v1/recovery/request` | 복구 개시 (지연 기간 시작) |
-| `POST /v1/recovery/sign`    | 복구 모드 서명 참여        |
-| `GET  /v1/health`           | 헬스체크                   |
+| Endpoint                    | Purpose                                        |
+| --------------------------- | ---------------------------------------------- |
+| `POST /v1/dkg/session`      | Open a DKG session                             |
+| `POST /v1/dkg/round`        | Exchange DKG round messages                    |
+| `POST /v1/sign/session`     | Open an everyday signing session               |
+| `POST /v1/sign/round`       | Exchange signing round messages                |
+| `POST /v1/recovery/request` | Start recovery (begins the cooling-off period) |
+| `POST /v1/recovery/sign`    | Join recovery-mode signing                     |
+| `GET  /v1/health`           | Health check                                   |
 
-- `GET /docs` — Swagger UI, `GET /openapi.json` — 스펙.
-- 스펙은 코드에서 생성하며, 생성된 `openapi.json`을 저장소에 커밋해 변경을 리뷰에서 보이게 한다.
-- 모든 요청/응답 타입에 `utoipa::ToSchema`를 붙인다. 문서화되지 않은 공개 엔드포인트는 두지 않는다.
+- `GET /docs` serves Swagger UI and `GET /openapi.json` the spec.
+- The spec is generated from code (`make openapi`) and the generated
+  [`openapi.json`](openapi.json) is committed so API changes show up in review.
+- Every request and response type derives `utoipa::ToSchema`. No undocumented public endpoints.
 
-## 인증
+## Authentication
 
-**미정.** Phase 3까지는 개발용 공유 토큰으로 대신하고, 실제 인증 체계는 별도로 설계한다 (`roadmap.md`).
+**Not designed yet.** Until then a development-only shared token stands in, and the real scheme
+is designed separately (`roadmap.md`). The server logs a warning on start-up.
 
-다만 인증 방식과 무관하게 다음은 확정이다:
+Regardless of the eventual scheme, these are settled:
 
-- 복구 요청은 인증 + 지연 기간(cooling-off)을 거친다.
-- 복구 개시 시 등록된 채널로 알림을 보내고, 사용자가 취소할 수 있게 한다.
-- 인증 설계가 끝나기 전에는 프로덕션 배포를 하지 않는다.
+- Recovery requests require authentication plus a cooling-off period.
+- Starting recovery notifies the registered channel and the user can cancel.
+- **We do not deploy to production before the authentication design is finished.**
 
-## 보안 요구
+## Availability
 
-- 요청 인증, rate limit, 복구 지연 기간을 적용한다.
-- 로그에 셰어·토큰·개인정보를 남기지 않는다. 구조화 로그에 필드 단위 마스킹을 적용한다.
-- 서버 단독으로 서명하거나 키를 복원할 수 없음이 코드·테스트로 보장되어야 한다.
-- 이 전제를 깨는 변경은 ADR 없이 금지.
+Everyday signing depends on the server, so server availability is product availability. Two
+mitigations:
 
-## 가용성
+- Users can sign without the server using **A + B** (`recovery.md`, scenario 0). When the
+  extension cannot reach the server it offers that path.
+- The server is self-hostable. If the operator disappears, users can run it themselves.
 
-평시 서명이 서버에 의존하므로 서버 가용성이 곧 제품 가용성이다. 완화책은 두 가지다.
+## Operations
 
-- 사용자는 서버 없이 **A + B**로 서명할 수 있다 (`recovery.md` 시나리오 0). 확장은 서버에 닿지 못하면 이 경로를 제시한다.
-- 자체 호스팅이 가능하다. 운영 주체가 사라져도 사용자가 직접 띄울 수 있다.
-
-## 운영
-
-- 컨테이너 배포. 설정은 환경변수로 주입하고 시크릿은 저장소에 두지 않는다.
-- SQLite 파일과 암호화 키는 **별도로** 백업한다. 한곳에 같이 두면 암호화 의미가 없다.
-- 자체 호스팅이 가능해야 한다. 특정 클라우드에 종속되지 않는다.
+- Deployed as a container. Configuration comes from environment variables; secrets stay out of
+  the repository.
+- **Back up the SQLite file and the sealing key separately.** Keeping them together defeats the
+  encryption.
+- Must remain self-hostable and not tied to a specific cloud.

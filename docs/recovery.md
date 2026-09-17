@@ -1,69 +1,75 @@
-# 복구
+# Recovery
 
-## 전제
+## Starting point
 
-- 정상 상태: 확장에 A / 사용자가 오프라인 보관하는 복구 파일에 B / 서버에 C
-  ([adr/0005](adr/0005-share-placement.md)).
-- 평시 서명은 A + C로 이루어지므로, 복구가 필요한 상황은 **둘 중 하나를 잃었을 때**다.
+- Normal state: share A in the extension, share B in a recovery file the user keeps offline,
+  share C on the server ([adr/0005](adr/0005-share-placement.md)).
+- Everyday signing uses A + C, so recovery is needed when one of those two is gone.
 
-## 시나리오 0 — 서버 장애 또는 서비스 중단
+## Scenario 0 — server outage or shutdown
 
-복구 절차가 필요 없다. 사용자는 **A + B**로 직접 서명할 수 있다. 확장은 서버에 닿지 못하면
-복구 파일을 요구하는 비상 서명 경로를 제시한다.
+No recovery procedure is needed. The user signs directly with **A + B**. When the extension
+cannot reach the server it offers this emergency path and asks for the recovery file.
 
-이 경로가 존재한다는 것이 "키를 인질로 잡지 않는다"는 약속의 실체다. 서비스가 사라져도
-사용자 자산은 잠기지 않는다.
+This path is what makes "we do not hold your key hostage" a real property rather than a promise:
+if the service disappears, the user's funds are still spendable.
 
-## 시나리오 1 — 기기 분실 (셰어 A 분실)
+## Scenario 1 — device lost (share A gone)
 
-1. 새 기기에 확장을 설치하고 복구 파일(B)을 가져온다.
-2. 사용자 인증 후 서버가 복구 모드 참여에 동의한다. **B + C**로 서명이 가능해진다.
-3. 새 기기에 셰어 A를 새로 발급한다 — 아래 "새 셰어 발급" 참조.
-4. 새 복구 파일을 내보내게 하고, 옛 복구 파일은 폐기하도록 안내한다.
-5. 리프레시/리셰어 전까지는 복구 모드로 표시하고, 일반 서명을 제한한다.
+1. Install the extension on a new device and import the recovery file (B).
+2. After authenticating the user, the server agrees to join in recovery mode. **B + C** can now
+   sign.
+3. Issue a fresh share A to the new device — see "Issuing a new share" below.
+4. Export a new recovery file and tell the user to destroy the old one.
+5. Until the reshare completes, show the wallet as being in recovery mode and restrict ordinary
+   signing.
 
-### 새 셰어 발급 (리셰어)
+### Issuing a new share (reshare)
 
-업스트림 리프레시는 **셰어를 이미 가진 파티만 참여할 수 있다**. 따라서 빈 자리를 새 기기로
-채우려면 리프레시만으로는 부족하다 ([adr/0004](adr/0004-mpc-library-reselection.md) 발견 3).
-복구 파일(B)과 서버 셰어(C)가 있으므로 임계값은 충족된다.
+Upstream refresh **only admits parties that already hold a share**, so it cannot fill an empty
+slot on a new device ([adr/0004](adr/0004-mpc-library-reselection.md)). The recovery file (B)
+and the server share (C) do meet the threshold, though.
 
-`mpc_core::reshare`가 이를 구현한다. 사용자 기기에서 다음을 수행한다.
+`mpc_core::reshare` implements this. On the user's device:
 
-1. 남은 셰어 2개로 개인키를 복원한다 (Shamir 보간).
-2. 즉시 3개 셰어로 다시 나눈다 (신뢰 딜러 방식).
-3. 새 셰어를 각 파티에 배포하고, 메모리의 개인키를 폐기한다.
+1. Reconstruct the private key from the two surviving shares (Lagrange interpolation).
+2. Immediately split it into three fresh shares (trusted-dealer style).
+3. Distribute the new shares and discard the reconstructed key from memory.
 
-공개키가 유지되므로 주소는 바뀌지 않는다. 옛 셰어는 새 셋과 섞이지 않는다 —
-둘 다 테스트로 검증한다 (`crates/mpc-core/tests/adversarial.rs`).
+The public key is preserved, so the address does not change, and old shares no longer combine
+with the new set. Both properties are covered by tests
+(`crates/mpc-core/tests/adversarial.rs`).
 
-**이 절차에는 개인키가 잠깐 한 곳에 존재하는 순간(SPOF)이 있다.** 다음 조건을 지킨다.
+**This procedure briefly materialises the private key in one place (a single point of failure).**
+The following constraints apply:
 
-- 전적으로 **사용자 기기에서만** 수행한다. 서버는 복원된 키를 보지 않는다.
-- 복원된 키는 메모리에만 두고 즉시 zeroize한다. 디스크에 쓰지 않는다.
-- 사용자에게 이 순간을 고지한다. 숨기지 않는다.
-- 이미 키 추출(`export.md`)을 허용하는 설계이므로 새로운 신뢰 가정을 추가하지는 않는다.
+- It runs **only on the user's device.** The server never sees the reconstructed key.
+- The key stays in memory and is zeroized immediately. It is never written to disk.
+- Tell the user this moment exists. Do not hide it.
+- The design already permits key export, so this adds no new trust assumption.
 
-SPOF 없는 진짜 리셰어 프로토콜을 직접 구현하거나 업스트림에 기여하는 것이 장기 대안이다.
-현재 설계가 이미 키 추출을 허용하므로 새로운 신뢰 가정이 추가되지는 않지만, 감사 시 이
-절차를 중점 검토 대상으로 올린다.
+A reshare protocol without the single point of failure — implemented by us or contributed
+upstream — is the long-term alternative. In the meantime this procedure is a priority item for
+the external audit.
 
-## 시나리오 2 — 기기와 복구 파일을 모두 분실
+## Scenario 2 — device and recovery file both lost
 
-서버 셰어 C 하나로는 서명할 수 없다. **이 경우는 복구할 수 없다.**
+The server share C alone cannot sign. **This case is unrecoverable.**
 
-- 복구 파일은 온보딩에서 **반드시** 만들게 한다. 건너뛸 수 없다 (`export.md`).
-- 복구 파일을 확장과 **다른 곳**에 보관하도록 안내한다. 같은 기기에 두면 셰어 두 개가 한곳에 모여 이 설계의 이점이 사라진다.
-- 이 한계를 온보딩에서 명확히 고지한다. 숨기지 않는다.
+- Onboarding **requires** creating the recovery file; it cannot be skipped (`export.md`).
+- Tell the user to store it **away from** the extension. Keeping both on one machine collapses
+  two shares into one place and defeats the design.
+- State this limit plainly during onboarding. Do not hide it.
 
-## 서버 측 인증
+## Server-side checks
 
-- 복구 요청은 계정 인증 + 지연 기간(cooling-off)을 거친다. 기본 대기 시간은 운영 정책으로 정한다.
-- 복구 개시 시 등록된 채널로 알림을 보내고, 사용자가 취소할 수 있게 한다.
-- 모든 복구 시도는 감사 로그에 남긴다 (셰어·비밀 값은 기록하지 않는다).
+- Recovery requests require account authentication plus a cooling-off period. The exact waiting
+  time is an operational policy decision.
+- Notify the registered channel when recovery starts, and let the user cancel.
+- Log every recovery attempt in the audit log (never shares or other secrets).
 
-## 테스트 요구
+## Test requirements
 
-- A+C(평시), A+B(서버 장애), B+C(기기 분실) 세 조합 모두에서 서명이 되는지 테스트한다.
-- 복구 중단 시 이전 셰어가 그대로 유효한지(롤백 안전성) 테스트한다.
-- 리프레시 후 옛 셰어로 서명이 불가능한지 테스트한다.
+- Signing succeeds for all three pairings: A+C (everyday), A+B (server down), B+C (device lost).
+- Aborting recovery leaves the previous shares valid (rollback safety).
+- After refresh or reshare, old shares can no longer produce a valid signature.

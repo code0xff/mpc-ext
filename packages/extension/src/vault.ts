@@ -1,12 +1,11 @@
 /**
- * 셰어 A의 암호화 저장소.
+ * Encrypted storage for share A.
  *
- * 평문 셰어는 절대 디스크에 쓰지 않는다. 저장되는 것은 KDF 파라미터와 암호문뿐이다
+ * Plaintext shares never reach the disk; all that is stored is KDF parameters and ciphertext
  * (`docs/security.md`).
  *
- * Phase 2는 WebCrypto의 PBKDF2 + AES-GCM을 쓴다. `security.md`가 규정한
- * Argon2id + XChaCha20-Poly1305으로의 전환은 Phase 6 하드닝 항목이며,
- * `formatVersion`으로 마이그레이션한다.
+ * This uses WebCrypto's PBKDF2 + AES-GCM. Moving to the Argon2id + XChaCha20-Poly1305 that
+ * `security.md` calls for is a Phase 6 hardening task, migrated via `formatVersion`.
  */
 
 const STORAGE_KEY = 'vault';
@@ -20,13 +19,13 @@ interface VaultRecord {
   saltB64: string;
   ivB64: string;
   ciphertextB64: string;
-  /** 잠금 상태에서도 보여줄 수 있는 공개 정보. */
+  /** Public information that can be shown while locked. */
   publicKeyHex: string;
 }
 
 function toB64(bytes: Uint8Array): string {
-  // 셰어는 100 KB를 넘는다. String.fromCharCode(...bytes)로 한 번에 펼치면
-  // 인자 개수가 스택 한계를 넘어 터진다. 조각내서 이어붙인다.
+  // Shares are over 100 KB. Spreading them into String.fromCharCode(...bytes) in one go blows
+  // the argument-count limit and overflows the stack, so build the string in chunks.
   const CHUNK = 0x8000;
   let out = '';
   for (let i = 0; i < bytes.length; i += CHUNK) {
@@ -56,14 +55,14 @@ async function deriveKey(password: string, salt: Uint8Array, iterations: number)
   );
 }
 
-/** 셰어를 비밀번호로 암호화해 저장한다. */
+/** Encrypts a share under the password and stores it. */
 export async function store(
   password: string,
   share: Uint8Array,
   publicKeyHex: string,
 ): Promise<void> {
   const salt = crypto.getRandomValues(new Uint8Array(16));
-  // 논스는 레코드마다 새로 만든다. 재사용은 AES-GCM을 깨뜨린다.
+  // A fresh nonce per record. Reuse breaks AES-GCM.
   const iv = crypto.getRandomValues(new Uint8Array(12));
   const key = await deriveKey(password, salt, PBKDF2_ITERATIONS);
   const ciphertext = new Uint8Array(
@@ -91,22 +90,22 @@ async function read(): Promise<VaultRecord | undefined> {
   return stored[STORAGE_KEY] as VaultRecord | undefined;
 }
 
-/** 저장된 키가 있는지. */
+/** Whether a key is stored. */
 export async function exists(): Promise<boolean> {
   return (await read()) !== undefined;
 }
 
-/** 잠금 상태에서도 읽을 수 있는 공개키. */
+/** The public key, readable even while locked. */
 export async function publicKeyHex(): Promise<string | undefined> {
   return (await read())?.publicKeyHex;
 }
 
-/** 비밀번호로 셰어를 복호화한다. 비밀번호가 틀리면 `undefined`. */
+/** Decrypts the share with the password. Returns `undefined` if the password is wrong. */
 export async function unlock(password: string): Promise<Uint8Array | undefined> {
   const record = await read();
   if (!record) return undefined;
   if (record.formatVersion !== FORMAT_VERSION) {
-    throw new Error(`지원하지 않는 저장 포맷입니다 (v${record.formatVersion})`);
+    throw new Error(`unsupported storage format (v${record.formatVersion})`);
   }
 
   const key = await deriveKey(password, fromB64(record.saltB64), record.iterations);
@@ -118,7 +117,8 @@ export async function unlock(password: string): Promise<Uint8Array | undefined> 
     );
     return new Uint8Array(plaintext);
   } catch {
-    // 인증 실패 = 비밀번호 오류. 어느 쪽인지 구분해 알려주지 않는다.
+    // Authentication failure means a wrong password. We do not distinguish the two for the
+    // caller.
     return undefined;
   }
 }

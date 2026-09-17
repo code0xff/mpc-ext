@@ -1,89 +1,106 @@
-# ADR-0005: 셰어 배치 변경 — 확장 1 + 오프라인 1 + 서버 1
+# ADR-0005: Share placement — one in the extension, one offline, one on the server
 
-- 상태: 승인
-- 날짜: 2026-09-17
-- 대체: [ADR 없음 — 최초 설계는 `architecture.md`에 있었다]
+- Status: accepted
+- Date: 2026-09-17
 
-## 맥락
+## Context
 
-최초 설계는 **확장 2 + 서버 1**이었고, 평시 서명을 확장의 두 셰어로 오프라인 수행했다.
-프라이버시와 가용성이 목적이었다.
+The original design put **two shares in the extension and one on the server**, and signed
+everyday transactions offline using the extension's two shares. The goal was privacy and
+availability.
 
-그러나 Phase 0 검토에서 드러난 문제가 있다. 셰어 A와 B가 같은 확장, 같은 저장소,
-같은 비밀번호 아래 있으므로 **잠금이 풀린 확장을 장악한 공격자는 두 셰어를 모두 얻는다.**
-그 시점의 도난 내성은 평범한 암호화 지갑과 같고, MPC가 실질적으로 제공하는 것은
-복구 경로뿐이었다 (`security.md`의 "MPC가 주지 않는 것").
+A Phase 0 review exposed a problem. Shares A and B lived in the same extension, the same
+storage, behind the same password, so **an attacker who took over an unlocked extension obtained
+both.** At that moment the theft resistance equalled that of an ordinary encrypted wallet, and
+the only thing MPC really provided was a recovery path.
 
-## 결정
+## Decision
 
-셰어 배치를 다음으로 바꾼다.
+Place the shares as follows.
 
-| 셰어 | 보관 위치                                                           | 평시      | 복구                |
-| ---- | ------------------------------------------------------------------- | --------- | ------------------- |
-| A    | 확장 (암호화 저장소)                                                | 서명 참여 | —                   |
-| B    | **저장하지 않음** — 키 생성 시 파일로 내보내 사용자가 오프라인 보관 | 미사용    | 기기 분실 시 사용   |
-| C    | 서버                                                                | 서명 참여 | 서버 장애 시 미사용 |
+| Share | Where it lives                                                                   | Everyday | Recovery                       |
+| ----- | -------------------------------------------------------------------------------- | -------- | ------------------------------ |
+| A     | The extension (encrypted at rest)                                                | Signs    | —                              |
+| B     | **Not stored** — exported to a file at key creation and kept offline by the user | Unused   | Used when the device is lost   |
+| C     | The server                                                                       | Signs    | Unused when the server is down |
 
-- **평시 서명 = 확장(A) + 서버(C).**
-- 셰어 B는 DKG 직후 파일로 내보내고 **확장 메모리와 저장소에서 폐기한다.**
-- 온보딩에서 B 내보내기를 건너뛸 수 없다. 내보내지 않으면 키 생성이 완료되지 않는다.
+- **Everyday signing is extension (A) + server (C).**
+- Share B is exported right after DKG and then **erased from the extension's memory and
+  storage.**
+- Onboarding cannot skip the export of B. Key creation is not complete without it.
 
-## 결과
+## Consequences
 
-### 얻는 것
+### What we gain
 
-- **확장 장악만으로는 서명할 수 없다.** 공격자는 A 하나뿐이고, 서버가 실제 두 번째 요소로 동작한다. 서버는 rate limit, 이상 징후 차단, 사용자 확인을 강제할 수 있다.
-- **서버 침해만으로도 서명할 수 없다.** C 하나뿐이다.
-- **복구 파일 탈취만으로도 서명할 수 없다.** B 하나뿐이다.
-- **서비스가 사라져도 자산이 잠기지 않는다.** A + B로 서명할 수 있다. vendor lock-in이 없다는 약속이 이 배치에서 비로소 실제 성질이 된다.
-- 기기 분실 시 B + C로 복구한다.
+- **Taking over the extension is not enough to sign.** The attacker holds only A, and the server
+  becomes a real second factor that can enforce rate limits, anomaly blocking and user
+  confirmation.
+- **Compromising the server is not enough either.** It holds only C.
+- **Stealing the recovery file is not enough either.** It holds only B.
+- **Funds are not locked if the service disappears.** A + B can sign. The promise of no vendor
+  lock-in only becomes a real property under this placement.
+- Device loss is recovered with B + C.
 
-### 내주는 것
+### What we give up
 
-- **서버가 모든 서명에 관여한다.** 서버는 사용자가 무엇에 서명하는지 보게 되고, 서버가 내려가면 평시 서명이 불가능하다. 검열 가능성도 생긴다. 최초 설계가 피하려던 것을 의도적으로 감수한다.
-- **서명마다 네트워크 왕복이 필요하다.** 계산은 16 ms지만 실제 체감은 왕복 지연이 지배한다 ([adr/0004](0004-mpc-library-reselection.md)).
-- 서버 가용성이 제품 가용성이 된다. 자체 호스팅 가능성이 완화책이다 (`server.md`).
+- **The server takes part in every signature.** It learns what the user signs, and everyday
+  signing stops when it is down. Censorship becomes possible. We deliberately accept what the
+  original design set out to avoid.
+- **Every signature needs a network round trip.** The computation is 16 ms, but perceived latency
+  is dominated by the round trip ([adr/0004](0004-mpc-library-reselection.md)).
+- Server availability becomes product availability. Self-hostability is the mitigation
+  (`server.md`).
 
-### 새로 생기는 위험
+### New risks
 
-- **확장과 복구 파일을 같은 기기에 두면 A + B가 한곳에 모인다.** 이 경우 이전 설계와 같은 수준으로 되돌아간다. UI에서 다른 곳(다른 기기·인쇄물·금고)에 보관하도록 강하게 안내한다.
-- 복구 파일을 잃고 기기도 잃으면 C 하나만 남아 복구할 수 없다. 온보딩에서 명확히 고지한다.
+- **Keeping the recovery file on the same machine as the extension** puts A and B in one place,
+  which returns us to the previous design's weakness. The UI pushes hard for storing it
+  elsewhere — another device, print, a safe.
+- Losing the recovery file and the device together leaves only C, and recovery is impossible.
+  Onboarding says so explicitly.
 
-## Phase 2 구현 발견 — 복구 파일이 크다
+## Phase 2 finding — the recovery file is large
 
-MV3 서비스 워커 실측에서 **셰어 하나가 약 114 KB**로 나왔다 (JSON hex 인코딩 시 약 230 KB).
-DKLs23의 `Party`에 곱셈 프로토콜(OT 확장) 초기화 상태가 포함되기 때문이다.
+Measurements inside the MV3 service worker put **a single share at roughly 114 KB** (about 230 KB
+once hex-encoded into JSON), because a DKLs23 `Party` carries the multiplication protocol's OT
+setup state.
 
-영향:
+Consequences:
 
-- 복구 파일을 **니모닉 문구나 QR 코드로 만들 수 없다.** 종이 백업이 불가능하고, 사용자는 파일 자체를 보관해야 한다.
-- 파일 보관은 분실·손상 위험이 니모닉보다 크다. 온보딩 안내에 반영해야 한다.
+- The recovery file **cannot be a mnemonic or a QR code.** Paper backup is impossible and the
+  user has to keep the file itself.
+- Files are easier to lose or corrupt than mnemonics, which onboarding guidance has to reflect.
 
-절충안이 하나 있다. 개인키 복원에 필요한 것은 `poly_point`(32바이트)와 파티 인덱스뿐이므로,
-복구 파일을 **32바이트로 줄일 수 있다** (니모닉 가능). 대신 OT 상태가 없어
-**서버 장애 시 A+B 비상 서명은 불가능**해지고, 키를 복원해 새로 나누는 절차만 남는다.
+There was an alternative. Reconstructing the private key only needs `poly_point` (32 bytes) and
+the party index, so the recovery file **could shrink to 32 bytes** and become mnemonic-friendly —
+at the cost of losing the OT state, which makes **emergency A+B signing during a server outage
+impossible**, leaving only "reconstruct the key and re-split".
 
-|                            | 전체 셰어 (114 KB) | poly_point만 (32 B)           |
-| -------------------------- | ------------------ | ----------------------------- |
-| 니모닉·QR 백업             | 불가               | 가능                          |
-| 서버 장애 시 A+B 즉시 서명 | 가능               | 불가 — 키 복원 후 재구성 필요 |
-| 기기 분실 복구             | 가능               | 가능                          |
-| 키 추출                    | 가능               | 가능                          |
+|                                              | Full share (114 KB) | `poly_point` only (32 B)              |
+| -------------------------------------------- | ------------------- | ------------------------------------- |
+| Mnemonic/QR backup                           | No                  | Yes                                   |
+| Immediate A+B signing during a server outage | Yes                 | No — requires reconstruct and rebuild |
+| Device-loss recovery                         | Yes                 | Yes                                   |
+| Key export                                   | Yes                 | Yes                                   |
 
-**결정: 전체 셰어를 파일로 내보낸다 (114 KB).**
+**Decision: export the full share as a file (114 KB).**
 
-`poly_point`만 담으면 백업은 편해지지만 **서버 장애 시 A+B 즉시 서명**을 잃는다. 그것이
-이 배치를 채택한 핵심 이유이고("서비스가 사라져도 자산이 잠기지 않는다"), 백업 편의를 위해
-내줄 성질이 아니다. 니모닉 백업은 포기한다.
+Shrinking to `poly_point` makes backup convenient but forfeits **emergency A+B signing during a
+server outage**. That property is the reason this placement was adopted in the first place
+("funds are not locked if the service disappears"), and it is not something to trade away for
+backup ergonomics. We give up mnemonic backups instead.
 
-따르는 요구사항:
+Requirements that follow:
 
-- 온보딩은 파일 보관의 취약함(분실·손상·클라우드 동기화)을 명확히 안내한다.
-- 복구 파일 무결성을 확인할 수 있어야 한다 — 가져오기 시 공개키와 대조한다.
-- 사용자가 복사본을 여러 곳에 두도록 권한다. 셰어 B는 그 자체로는 서명할 수 없으므로 복사본이 여러 개여도 단독으로는 위험하지 않다.
+- Onboarding clearly explains the fragility of file backups (loss, corruption, cloud sync).
+- The recovery file's integrity must be checkable — compare its public key on import.
+- Encourage the user to keep several copies. Share B cannot sign on its own, so extra copies do
+  not increase risk.
 
-## 대안
+## Alternative
 
-평시에도 확장 2셰어로 서명하는 최초 설계를 유지하고, 셰어 B를 passkey PRF나 OS 키체인 등
-다른 신뢰 영역으로 옮기는 안을 검토했다. 프라이버시를 지키면서 두 요소를 분리할 수 있으나,
-구현 복잡도가 크고 브라우저별 지원이 고르지 않아 후속 과제로 남긴다 (`roadmap.md`).
+We considered keeping the original design and moving share B to a different trust domain, such as
+a passkey PRF or the OS keychain. That preserves privacy while still splitting the two factors,
+but implementation complexity is high and browser support is uneven, so it stays deferred work
+(`roadmap.md`).

@@ -3,7 +3,7 @@ updates:
   - package-ecosystem: cargo
     directory: /
     schedule: { interval: weekly }
-    # vendoring한 MPC crate는 자동 업데이트하지 않는다 (ADR-0004 완화책 1).
+    # The pinned MPC crate must not update automatically (ADR-0004, mitigation 1).
     ignore:
       - dependency-name: dkls23-*
   - package-ecosystem: npm

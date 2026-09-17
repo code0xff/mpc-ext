@@ -1,22 +1,22 @@
-//! 프로토콜 세션과 라운드 상태.
+//! Protocol sessions and round state.
 
-/// 세션 식별자. 재사용된 값은 거부한다 (리플레이 방지).
+/// A session identifier. Reused values are rejected, which blocks replay.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct SessionId(pub [u8; 32]);
 
-/// 프로토콜 라운드. 순서를 어긴 메시지는 세션을 폐기한다.
+/// A protocol round. Messages that arrive out of order discard the session.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub enum Round {
-    /// 세션 개시, 아직 메시지를 주고받지 않았다.
+    /// The session has started but no messages have been exchanged.
     Init,
-    /// n번째 라운드 진행 중.
+    /// Round `n` is in progress.
     Round(u8),
-    /// 프로토콜 완료.
+    /// The protocol finished.
     Done,
 }
 
 impl Round {
-    /// 다음에 와야 할 라운드.
+    /// The round that should come next.
     pub fn next(self) -> Self {
         match self {
             Round::Init => Round::Round(1),

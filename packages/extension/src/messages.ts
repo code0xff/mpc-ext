@@ -1,14 +1,14 @@
 /**
- * popup ↔ background 메시지 계약.
+ * The message contract between the popup and the background worker.
  *
- * 비밀 값은 이 경계를 넘지 않는다. 유일한 예외는 복구 파일 내보내기이며,
- * 그때도 사용자가 직접 저장하도록 넘길 뿐 확장은 저장하지 않는다.
+ * Secrets do not cross this boundary. The one exception is exporting the recovery file, and even
+ * then the value is handed to the user to save — the extension never stores it.
  */
 
-/** 확장의 현재 상태. */
+/** The extension's current state. */
 export type Status =
   | { kind: 'uninitialized' }
-  /** 키를 만들었고 복구 파일 저장을 기다리는 중. 아직 아무것도 저장되지 않았다. */
+  /** A key exists and we are waiting for the recovery file to be saved. Nothing is persisted yet. */
   | { kind: 'awaitingRecoveryExport'; publicKeyHex: string }
   | { kind: 'locked'; publicKeyHex: string }
   | { kind: 'unlocked'; publicKeyHex: string };
@@ -24,10 +24,10 @@ export type Request =
 
 export type Response<T> = { ok: true; value: T } | { ok: false; error: string };
 
-/** 키 생성 결과. `recoveryShareHex`는 사용자가 파일로 보관해야 하는 셰어 B다. */
+/** The result of key creation. `recoveryShareHex` is share B, which the user must keep as a file. */
 export interface CreatedKey {
   publicKeyHex: string;
-  /** 셰어 B. 확장은 이 값을 저장하지 않는다. */
+  /** Share B. The extension never stores this. */
   recoveryShareHex: string;
 }
 

@@ -1,26 +1,29 @@
-# ADR-0002: 기술 스택
+# ADR-0002: Technology stack
 
-- 상태: 승인
-- 날짜: 2026-09-16
+- Status: accepted
+- Date: 2026-09-16
 
-## 맥락
+## Context
 
-확장과 서버가 동일한 MPC 프로토콜 로직을 공유해야 한다. 프로토콜을 두 언어로 중복 구현하면
-두 구현이 갈라질 때 보안 사고로 직결된다.
+The extension and the server have to share the same MPC protocol logic. Implementing the
+protocol twice means the two implementations eventually diverge, and for cryptographic code that
+divergence is a security incident.
 
-## 결정
+## Decision
 
-- **MPC 코어**: Rust (`mpc-core`). 확장은 wasm, 서버는 네이티브로 같은 crate를 쓴다.
-- **서버**: Rust + axum.
-- **확장**: TypeScript + React + Vite + WXT (Manifest V3).
-- **워크스페이스**: cargo workspace + pnpm workspace.
+- **MPC core**: Rust (`mpc-core`). The extension consumes it as wasm, the server natively — the
+  same crate.
+- **Server**: Rust + axum.
+- **Extension**: TypeScript + React + Vite + WXT (Manifest V3).
+- **Workspaces**: a cargo workspace plus a pnpm workspace.
 
-## 결과
+## Consequences
 
-- 프로토콜 구현이 하나로 유지된다.
-- wasm 번들 크기와 서비스 워커 초기화 시간을 관리해야 한다 (Phase 1에서 측정).
-- 기여자에게 Rust와 TS 양쪽 툴체인이 필요하다. `make setup`으로 진입 장벽을 낮춘다.
+- There is exactly one protocol implementation.
+- We have to watch wasm bundle size and service worker start-up time (measured in Phase 1).
+- Contributors need both toolchains. `make setup` keeps the barrier low.
 
-## 대안
+## Alternative
 
-서버를 TypeScript로 두는 안은 Rust 코어를 napi/wasm으로 감싸는 바인딩 레이어가 추가로 필요해 기각했다.
+Writing the server in TypeScript would have required an extra binding layer (napi or wasm) around
+the Rust core, so we rejected it.

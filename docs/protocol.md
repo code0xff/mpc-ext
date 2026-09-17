@@ -1,49 +1,66 @@
-# 프로토콜
+# Protocol
 
-## 채택
+## What we use
 
-- **DKLs23** (Doerner–Kondi–Lee–Shelat, 2023) 임계 ECDSA. secp256k1.
-- 구현 기반: [`0xCarbon/DKLs23`](https://github.com/0xCarbon/DKLs23) (Apache-2.0 / MIT).
-- 결정 배경은 [adr/0004-mpc-library-reselection.md](adr/0004-mpc-library-reselection.md).
-  `silence-laboratories/dkls23`는 비오픈소스 라이선스(SLL)로 제외했다 ([adr/0001](adr/0001-mpc-library.md) 폐기).
-- **감사 전까지 실자산 사용을 권하지 않는다.** 이 경고를 README와 확장 UI에 표시한다.
+- **DKLs23** (Doerner–Kondi–Lee–Shelat, 2023) threshold ECDSA over secp256k1.
+- Implementation: [`0xCarbon/DKLs23`](https://github.com/0xCarbon/DKLs23) (Apache-2.0 / MIT).
+- Background in [adr/0004](adr/0004-mpc-library-reselection.md). We ruled out
+  `silence-laboratories/dkls23` because its licence is not open source
+  ([adr/0001](adr/0001-mpc-library.md), superseded).
+- **Until an audit lands, do not use this with real assets.** The warning appears in the README
+  and in the extension UI.
 
-## 라운드 흐름
+## Flows
 
-### DKG (키 생성)
+### DKG (key generation)
 
-1. 확장이 파티 A, B를 로컬에서 생성하고 서버에 파티 C 참여를 요청한다.
-2. 3-party DKG 실행, threshold = 2.
-3. 각 파티가 셰어를 저장. 확장은 A, B를 암호화 저장, 서버는 C를 저장.
-4. 공개키를 확인하고 사용자에게 표시한다.
+1. The extension creates parties A and B locally and asks the server to join as party C.
+2. Run the 3-party DKG with threshold 2.
+3. Each party stores its share. The extension keeps A encrypted, exports B as a recovery file,
+   and the server stores C.
+4. Confirm the public key and show it to the user.
 
-DKG 실패 시 부분 저장된 셰어는 모두 폐기한다. 원자적으로 성공하거나 아무것도 남기지 않는다.
+If DKG fails, discard every partially stored share. It either succeeds atomically or leaves
+nothing behind.
 
-### 서명 (평시)
+### Signing (everyday)
 
-- 파티 A+B, 확장 내부에서만 실행. 네트워크 왕복 없음.
-- 사용자 승인 후 진행하며, 요청 origin과 서명 대상을 UI에 표시한다.
+- Parties A and C: the extension and the server. Requires a network round trip.
+- Proceeds only after user approval, and the UI shows the requesting origin and what is being
+  signed.
 
-### 서명 (복구 모드)
+### Signing (server unavailable)
 
-- 남은 확장 셰어 + 서버 셰어 C. 서버는 요청을 인증하고 참여한다 (`server.md`).
+- Parties A and B: the extension plus the recovery file the user loads. Works fully offline.
 
-### 키 리프레시 / 리셰어
+### Signing (device lost)
 
-- 공개키를 유지한 채 셰어만 재생성한다. 복구 직후 반드시 실행하여 분실 셰어를 무효화하고 2-of-3 상태로 되돌린다.
-- 업스트림의 `refresh.rs` / `re_key.rs`에 대응한다. **이 기능이 없으면 복구는 주소 변경을 동반한 이전이 되므로, 리프레시는 선택 기능이 아니라 필수 요건이다.**
-- 주기적 리프레시는 후속 과제 (`roadmap.md`).
+- Parties B and C, after the server's recovery checks (`recovery.md`).
 
-## 메시지 포맷
+### Key refresh and reshare
 
-- 인코딩: CBOR. 모든 메시지에 `version`, `session_id`, `round`, `party_id` 포함.
-- 세션은 만료 시간을 갖고, 재사용된 `session_id`는 거부한다.
-- 라운드 순서를 어긴 메시지는 세션을 폐기한다 (부분 진행 상태를 남기지 않는다).
+- **Refresh** rotates every share while keeping the public key, so old shares stop working.
+  It maps to the upstream `refresh_complete_*` functions and requires **all existing parties**.
+- **Reshare** issues a fresh set of shares from the surviving two when a party has to be
+  replaced — refresh cannot do this, since a brand-new device holds no share
+  ([adr/0004](adr/0004-mpc-library-reselection.md)). It briefly reconstructs the private key, so
+  it runs on the user's device only (`recovery.md`).
+- Periodic refresh is deferred work (`roadmap.md`).
 
-## 구현 규칙
+## Messages
 
-- 프로토콜 상태머신은 `mpc-core`에만 둔다. 확장/서버는 전송과 저장만 담당한다.
-- **업스트림 crate는 `mpc-core` 내부의 트레이트 뒤로 감춘다.** 확장·서버 코드가 업스트림 타입을 직접 참조하지 않는다. 교체 가능성을 코드 구조로 유지하기 위함이다.
-- 업스트림은 고정 커밋으로 vendoring한다. 자동 업데이트하지 않고, 변경은 리뷰 후 수동 반영한다.
-- 상태 전이는 명시적 타입으로 표현하고, 잘못된 순서 호출이 컴파일 타임에 걸리게 한다.
-- 테스트: 라운드별 벡터 테스트, 3파티 통합 테스트, 악의적 메시지 주입 테스트를 갖춘다.
+- Parties exchange `Envelope`s: `{ round, from, to, payload }`, where `to = None` is a
+  broadcast. Payloads are opaque bytes only the receiving session can interpret.
+- Sessions carry an id that must never be reused, and they expire.
+- Messages arriving out of round order abort the session; no partial state is kept.
+
+## Implementation rules
+
+- Protocol state machines live only in `mpc-core`. The extension and server handle transport and
+  storage.
+- **The upstream crate stays behind a boundary inside `mpc-core`.** Extension and server code
+  never references upstream types, which keeps the library replaceable.
+- Pin the upstream crate by exact version. No automatic updates; changes land after review.
+- Session state must be serializable — the server keeps no state between HTTP requests and
+  re-loads it (sealed) every round.
+- Tests: per-round vectors, 3-party integration tests, and adversarial input tests.

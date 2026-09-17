@@ -1,34 +1,39 @@
-# 웹 Provider API
+# Web provider API
 
-웹페이지가 확장을 통해 MPC 서명을 사용하는 인터페이스.
+The interface web pages use to sign through the extension.
 
-## 설계 원칙
+## Design principles
 
-- 표준을 따른다. 커스텀 API를 새로 만들지 않는다 (EIP-1193 / EIP-6963 호환).
-- 페이지는 셰어에 접근할 수 없다. 서명 결과만 받는다.
-- 모든 서명·연결 요청은 사용자 승인이 필요하다. 무음 승인은 없다.
+- Follow the standards. Do not invent a new API (EIP-1193 / EIP-6963 compatible).
+- Pages never reach the shares. They only receive signatures.
+- Every connection and signing request needs user approval. There is no silent approval.
 
-## 연결 경로
+## Connection path
 
 ```
-page → injected provider → content script → background (MPC 실행)
+page → injected provider → content script → background (runs the MPC)
 ```
 
-- injected provider는 `window`에 노출되며, EIP-6963으로 지갑을 announce한다.
-- content script는 스키마 검증만 하고 정책 판단은 background가 한다.
-- background는 요청의 origin을 sender에서 직접 확인한다. 페이지가 보낸 origin 값을 신뢰하지 않는다.
+- The injected provider is exposed on `window` and announces the wallet via EIP-6963.
+- The content script only validates the schema; policy decisions belong to the background
+  worker.
+- The background worker takes the origin from the message sender, never from a value the page
+  supplied.
 
-## 권한
+## Permissions
 
-- origin 단위로 연결 권한을 저장하고, 사용자가 언제든 취소할 수 있다.
-- 연결 권한이 있어도 서명은 매번 승인받는다 (자동 승인은 후속 과제이며 기본 비활성).
-- 확장이 잠긴 상태의 요청은 해제 프롬프트를 띄우고, 거부 시 명확한 에러를 반환한다.
+- Connection permissions are stored per origin and the user can revoke them at any time.
+- Even with a connection permission, every signature is approved individually. Automatic
+  approval is deferred work and off by default.
+- Requests that arrive while the extension is locked raise an unlock prompt, and return a clear
+  error if the user declines.
 
-## 에러
+## Errors
 
-- 에러 코드는 EIP-1193 규약을 따른다 (`4001` 사용자 거부 등).
-- 에러 메시지에 내부 상태나 비밀 값을 노출하지 않는다.
+- Error codes follow EIP-1193 (`4001` for user rejection, and so on).
+- Error messages never leak internal state or secrets.
 
 ## SDK
 
-`packages/sdk`는 페이지 측 얇은 래퍼다. 확장 미설치 감지, 타입 정의, 예제를 제공한다.
+`packages/sdk` is a thin page-side wrapper. It detects whether the extension is installed and
+provides type definitions and examples.

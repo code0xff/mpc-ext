@@ -678,14 +678,15 @@
 
 <header class="masthead">
   <div class="wrap">
-    <p class="eyebrow">DSRV Labs · 오픈소스</p>
+    <p class="eyebrow">DSRV Labs · open source</p>
     <h1 class="title">mpc-ext<span>/</span>2-of-3</h1>
     <p class="lede">
-      키를 세 조각으로 나눠 서로 다른 세 곳에 하나씩 둡니다. 확장 하나, 사용자가 보관하는 복구 파일
-      하나, 서버 하나. 평소에는 확장과 서버가 함께 서명하므로 어느 한쪽이 털려도 서명할 수 없습니다.
+      A key split into three pieces, one in each of three different places: the extension, a
+      recovery file you keep, and the server. Day to day the extension and the server sign together,
+      so compromising either one alone cannot produce a signature.
     </p>
     <div class="meta-row">
-      <span class="pill pill-warn"><span class="dot"></span>감사 전 · 실자산 사용 금지</span>
+      <span class="pill pill-warn"><span class="dot"></span>unaudited · not for real assets</span>
       <span>DKLs23 · secp256k1</span>
       <span>Rust + wasm · MV3</span>
       <span>Apache-2.0</span>
@@ -696,72 +697,73 @@
 <section id="mechanism">
   <div class="wrap">
     <div class="sec-head">
-      <p class="eyebrow">매커니즘</p>
-      <h2>셰어 세 개, 서명에 필요한 건 두 개</h2>
+      <p class="eyebrow">How it works</p>
+      <h2>Three shares, two of them sign</h2>
       <p>
-        완전한 개인키는 어디에도 존재하지 않습니다. 세 개의 셰어 중 두 개가 모여야 서명이
-        만들어지고, 서명하는 순간에도 키가 조립되지는 않습니다. 아래에서 상황을 골라 어떤 셰어가
-        참여하는지 확인하세요.
+        The complete private key exists nowhere. Two of the three shares have to come together to
+        produce a signature, and even then the key is never assembled. Because the three live in
+        different places, breaching any one of them still cannot sign. Pick a situation below to see
+        which shares take part.
       </p>
     </div>
 
-    <div class="scenarios" role="tablist" aria-label="시나리오">
+    <div class="scenarios" role="tablist" aria-label="Scenarios">
       <button class="tab" role="tab" id="tab-normal" aria-controls="stage" aria-selected="true">
-        평시 서명
+        Everyday signing
       </button>
       <button class="tab" role="tab" id="tab-offline" aria-controls="stage" aria-selected="false">
-        서버 장애
+        Server down
       </button>
       <button class="tab" role="tab" id="tab-lost" aria-controls="stage" aria-selected="false">
-        기기 분실
+        Device lost
       </button>
       <button class="tab" role="tab" id="tab-seized" aria-controls="stage" aria-selected="false">
-        확장 장악
+        Extension compromised
       </button>
       <button class="tab" role="tab" id="tab-export" aria-controls="stage" aria-selected="false">
-        키 추출
+        Key export
       </button>
       <button class="tab" role="tab" id="tab-device" aria-controls="stage" aria-selected="false">
-        기기 + 복구 파일 분실
+        Device and file both lost
       </button>
     </div>
 
     <div class="stage" id="stage">
       <div class="zone">
         <div class="zone-head">
-          <strong>크롬 확장</strong>
-          <span class="mono">기기</span>
+          <strong>Chrome extension</strong>
+          <span class="mono">on your device</span>
         </div>
         <div class="shares">
           <div class="share" id="share-a" data-state="signing">
             <div class="key">A</div>
-            <div class="role"><b>셰어 A</b><span id="role-a">서명 참여</span></div>
+            <div class="role"><b>Share A</b><span id="role-a">signing</span></div>
           </div>
         </div>
       </div>
 
       <div class="zone">
         <div class="zone-head">
-          <strong>복구 파일</strong>
-          <span class="mono">오프라인 보관</span>
+          <strong>Recovery file</strong>
+          <span class="mono">kept offline</span>
         </div>
         <div class="shares">
           <div class="share" id="share-b" data-state="held">
             <div class="key">B</div>
-            <div class="role"><b>셰어 B</b><span id="role-b">대기 — 평시 미사용</span></div>
+            <div class="role"><b>Share B</b><span id="role-b">idle — unused day to day</span></div>
           </div>
         </div>
       </div>
 
       <div class="zone">
         <div class="zone-head">
-          <strong>서버</strong>
-          <span class="mono">자체 호스팅 가능</span>
+          <strong>Server</strong>
+          <span class="mono">self-hostable</span>
         </div>
         <div class="shares">
           <div class="share" id="share-c" data-state="signing">
             <div class="key">C</div>
-            <div class="role"><b>셰어 C</b><span id="role-c">서명 참여</span></div>
+            <div class="role"><b>Share C</b><span id="role-c">signing</span></div>
           </div>
         </div>
       </div>
@@ -769,12 +771,12 @@
 
     <div class="readout">
       <span class="count" id="readout-count">2 / 3</span>
-      <span class="verdict" id="readout-verdict">서명 가능 · 확장과 서버가 함께</span>
+      <span class="verdict" id="readout-verdict">can sign — extension and server together</span>
     </div>
 
     <p class="scenario-note" id="scenario-note">
-      <b>확장과 서버가 각각 셰어 하나씩으로 함께 서명합니다.</b> 서버는 보관소가 아니라 두 번째
-      요소입니다 — 확장이 장악되어도 서버가 거부하면 서명은 만들어지지 않습니다.
+      <b>The extension and the server each bring one share.</b> The server is a second factor, not a
+      vault — if the extension is compromised and the server refuses, no signature is produced.
     </p>
   </div>
 </section>
@@ -782,28 +784,33 @@
 <section id="limits">
   <div class="wrap">
     <div class="limits">
-      <p class="eyebrow">정직한 고지</p>
-      <h3>무엇을 내주었나</h3>
-      <p>셰어를 세 곳에 나눈 대가로 두 가지를 내줍니다. 숨기지 않고 적어둡니다.</p>
+      <p class="eyebrow">Stated plainly</p>
+      <h3>What we gave up</h3>
+      <p>
+        Splitting the shares across three places costs us two things. We would rather write them
+        down than hide them.
+      </p>
       <ul>
         <li>
-          <b>서버가 모든 서명에 관여합니다.</b> 서버는 사용자가 무엇에 서명하는지 보게 되고, 서버가
-          내려가면 복구 파일을 꺼내 A+B로 서명해야 합니다. 검열 가능성도 생깁니다.
+          <b>The server takes part in every signature.</b> It learns what you sign, and when it is
+          down you have to fetch your recovery file and sign with A+B instead. Censorship becomes
+          possible.
         </li>
         <li>
-          <b>서명마다 네트워크 왕복이 필요합니다.</b> 계산은 16 ms지만 체감 지연은 왕복이
-          지배합니다.
+          <b>Every signature needs a network round trip.</b> The computation takes 16 ms, but
+          perceived latency is dominated by the round trip.
         </li>
       </ul>
-      <p>그리고 사용자가 깨뜨릴 수 있는 전제가 둘 있습니다.</p>
+      <p>And there are two assumptions you can break yourself.</p>
       <ul>
         <li>
-          <b>복구 파일을 확장과 같은 기기에 두면</b> 셰어 두 개가 한곳에 모입니다. 그 기기가
-          장악되면 서명이 가능해지고, 이 설계의 이점이 사라집니다.
+          <b>Keeping the recovery file on the same machine as the extension</b> puts two shares in
+          one place. Take over that machine and signing becomes possible, which defeats the whole
+          design.
         </li>
         <li>
-          <b>복구 파일을 잃고 기기도 잃으면 복구할 수 없습니다.</b> 서버 셰어 하나만 남기
-          때문입니다.
+          <b>Losing the recovery file and the device together is unrecoverable</b>, because only the
+          server share would remain.
         </li>
       </ul>
     </div>
@@ -813,11 +820,11 @@
 <section id="measured">
   <div class="wrap">
     <div class="sec-head">
-      <p class="eyebrow">실측</p>
-      <h2>브라우저에서 쓸 만한가</h2>
+      <p class="eyebrow">Measured</p>
+      <h2>Is it fast enough in a browser?</h2>
       <p>
-        라이브러리를 고르기 전에 정한 기준을 실제 구현으로 확인했습니다. 5회 평균이며, wasm 수치는
-        V8에서 세 파티를 한 스레드로 모두 돌린 값입니다.
+        We set budgets before choosing a library, then checked them against the real implementation.
+        Mean of five runs; the wasm figures drive all three parties on one V8 thread.
       </p>
     </div>
 
@@ -825,43 +832,43 @@
       <table class="measures">
         <thead>
           <tr>
-            <th scope="col">동작</th>
-            <th scope="col">네이티브</th>
+            <th scope="col">Operation</th>
+            <th scope="col">Native</th>
             <th scope="col">wasm (V8)</th>
-            <th scope="col">기준</th>
-            <th scope="col">결과</th>
+            <th scope="col">Budget</th>
+            <th scope="col">Result</th>
           </tr>
         </thead>
         <tbody>
           <tr>
-            <td>서명 (2파티)</td>
+            <td>Signing (2 parties)</td>
             <td class="num">4.4 ms</td>
             <td class="num hi">16 ms</td>
             <td class="num">1 s</td>
-            <td class="pass">통과</td>
+            <td class="pass">pass</td>
           </tr>
           <tr>
-            <td>DKG (3파티)</td>
+            <td>DKG (3 parties)</td>
             <td class="num">833 ms</td>
             <td class="num hi">4,920 ms</td>
             <td class="num">10 s</td>
-            <td class="pass">통과</td>
+            <td class="pass">pass</td>
           </tr>
           <tr>
-            <td>키 리프레시 (3파티)</td>
+            <td>Key refresh (3 parties)</td>
             <td class="num">834 ms</td>
             <td class="num hi">4,868 ms</td>
             <td class="num">30 s</td>
-            <td class="pass">통과</td>
+            <td class="pass">pass</td>
           </tr>
         </tbody>
       </table>
     </div>
 
     <p class="scenario-note">
-      <b>평시 서명 16 ms.</b> 매일 쓰는 경로에서는 지연이 느껴지지 않습니다. 키 생성과 리프레시는
-      5초 가까이 걸리지만 둘 다 드물게 일어나는 작업입니다. wasm 번들은 최적화 후 459 KB (gzip 174
-      KB) 입니다.
+      <b>Everyday signing takes 16 ms.</b> The path you use daily has no perceptible delay. Key
+      creation and refresh take close to five seconds, but both are rare. The wasm bundle is 459 KB
+      after optimisation, 174 KB gzipped.
     </p>
   </div>
 </section>
@@ -869,11 +876,11 @@
 <section id="progress">
   <div class="wrap">
     <div class="sec-head">
-      <p class="eyebrow">진행 상황</p>
-      <h2>어디까지 왔나</h2>
+      <p class="eyebrow">Progress</p>
+      <h2>Where we are</h2>
       <p>
-        단계는 실제 순서입니다. 앞 단계의 결과가 다음 단계의 설계를 바꾸기 때문에 병렬로 진행하지
-        않습니다.
+        These phases are a real sequence, not a checklist. Each one's results change the next one's
+        design, so we do not run them in parallel.
       </p>
     </div>
 
@@ -881,65 +888,76 @@
       <div class="phase" data-status="done">
         <div class="num">PHASE 0</div>
         <div class="body">
-          <strong>기반</strong>
+          <strong>Foundations</strong>
           <span
-            >cargo · pnpm 워크스페이스, 품질 게이트(fmt · clippy · tsc strict · test), 공급망
-            검사(cargo-deny · gitleaks), MPC 라이브러리 선정</span
+            >cargo and pnpm workspaces, the quality gate (fmt, clippy, strict tsc, tests),
+            supply-chain checks (cargo-deny, gitleaks), and choosing the MPC library</span
           >
         </div>
-        <div class="status">완료</div>
+        <div class="status">done</div>
       </div>
       <div class="phase" data-status="active">
         <div class="num">PHASE 1</div>
         <div class="body">
-          <strong>MPC 코어</strong>
+          <strong>MPC core</strong>
           <span
-            >DKG · 서명 · 리프레시 구현 완료, 통합 테스트 통과(임의의 2셰어 조합 서명, 리프레시 후
-            공개키 유지와 옛 셰어 무효화), 브라우저 실측 완료. 남은 것은 악성 메시지 테스트와 감사
-            범위 확정</span
+            >DKG, signing and refresh implemented; integration tests pass (any two shares sign,
+            refresh keeps the public key, old shares stop working); browser measurements done.
+            Reshare and key export landed too.</span
           >
         </div>
-        <div class="status">진행 중</div>
+        <div class="status">in progress</div>
       </div>
       <div class="phase" data-status="planned">
         <div class="num">PHASE 2</div>
         <div class="body">
-          <strong>확장 MVP</strong>
-          <span>암호화 저장소와 잠금/해제, 로컬 2셰어 DKG · 서명, 온보딩과 서명 승인 UI</span>
+          <strong>Extension MVP</strong>
+          <span
+            >wasm confirmed running in an MV3 service worker, encrypted storage, password
+            lock/unlock, and atomic onboarding that will not let you skip the recovery export</span
+          >
         </div>
-        <div class="status">예정</div>
+        <div class="status">planned</div>
       </div>
       <div class="phase" data-status="planned">
         <div class="num">PHASE 3</div>
         <div class="body">
-          <strong>서버 + 2-of-3</strong>
-          <span>서버 DKG 참여, 3셰어 구성, 복구 흐름과 키 리프레시</span>
+          <strong>Server and the real 2-of-3</strong>
+          <span
+            >the server joins DKG over HTTP with sealed state in SQLite. Still to come: the everyday
+            signing transport, the recovery flow, and the authentication design</span
+          >
         </div>
-        <div class="status">예정</div>
+        <div class="status">planned</div>
       </div>
       <div class="phase" data-status="planned">
         <div class="num">PHASE 4</div>
         <div class="body">
-          <strong>웹 통합</strong>
-          <span>EIP-1193 / EIP-6963 provider, origin 권한 관리, SDK와 예제 dApp</span>
+          <strong>Web integration</strong>
+          <span
+            >EIP-1193 / EIP-6963 provider, per-origin permissions, the SDK and an example dApp</span
+          >
         </div>
-        <div class="status">예정</div>
+        <div class="status">planned</div>
       </div>
       <div class="phase" data-status="planned">
         <div class="num">PHASE 5</div>
         <div class="body">
-          <strong>추출</strong>
-          <span>셰어 export · import, 온보딩 편입, 완전 개인키 추출</span>
+          <strong>Export</strong>
+          <span>recovery file import, and full private key export in the UI with warnings</span>
         </div>
-        <div class="status">예정</div>
+        <div class="status">planned</div>
       </div>
       <div class="phase" data-status="planned">
         <div class="num">PHASE 6</div>
         <div class="body">
-          <strong>하드닝</strong>
-          <span>외부 보안 감사, 재현 가능 빌드와 릴리스 서명, 웹스토어 배포</span>
+          <strong>Hardening</strong>
+          <span
+            >external security audit, reproducible builds and signed releases, Web Store
+            publication</span
+          >
         </div>
-        <div class="status">예정</div>
+        <div class="status">planned</div>
       </div>
     </div>
   </div>
@@ -948,64 +966,68 @@
 <section id="decisions">
   <div class="wrap">
     <div class="sec-head">
-      <p class="eyebrow">결정 기록</p>
-      <h2>되돌리기 어려운 선택들</h2>
+      <p class="eyebrow">Decision record</p>
+      <h2>Choices that are hard to undo</h2>
       <p>
-        스택 교체, 프로토콜 변경, 저장 포맷 변경은 ADR로 남깁니다. 폐기된 결정도 지우지 않고 사유와
-        함께 보존합니다.
+        Stack swaps, protocol changes and storage format changes are recorded as ADRs. Withdrawn
+        decisions are kept too, along with why they were withdrawn.
       </p>
     </div>
 
     <div class="decisions">
       <div class="decision" data-superseded="true">
         <div class="id">ADR-0001</div>
-        <div class="what">MPC 라이브러리 — silence-laboratories/dkls23</div>
+        <div class="what">MPC library — silence-laboratories/dkls23</div>
         <div class="why">
-          폐기. Apache-2.0으로 잘못 파악했으나 실제로는 비상업 · 철회가능 · 재배포불가 라이선스였고,
-          오픈소스 프로젝트가 쓸 수 없습니다.
+          Withdrawn. We read it as Apache-2.0; it is in fact non-commercial, revocable and
+          non-redistributable, which an open-source project cannot use.
         </div>
       </div>
       <div class="decision">
         <div class="id">ADR-0002</div>
-        <div class="what">스택 — Rust 코어를 확장과 서버가 공유</div>
+        <div class="what">Stack — one Rust core shared by extension and server</div>
         <div class="why">
-          프로토콜을 두 언어로 중복 구현하면 두 구현이 갈라질 때 곧바로 보안 사고가 됩니다. 확장은
-          wasm, 서버는 네이티브로 같은 crate를 씁니다.
+          Implementing the protocol twice means the two eventually diverge, and for crypto that
+          divergence is a security incident. The extension consumes the crate as wasm, the server
+          natively.
         </div>
       </div>
       <div class="decision">
         <div class="id">ADR-0003</div>
-        <div class="what">서버 저장소 — SQLite</div>
+        <div class="what">Server storage — SQLite</div>
         <div class="why">
-          파일 하나로 자체 호스팅이 쉽고, DKG처럼 여러 단계를 거치는 작업을 트랜잭션으로 묶어 반쪽
-          상태를 막습니다. 셰어는 앱에서 암호화한 뒤 저장합니다.
+          A single file makes self-hosting easy, and multi-step operations such as DKG commit in one
+          transaction so no half-finished state survives. Shares are encrypted by the application
+          before storage.
         </div>
       </div>
       <div class="decision">
         <div class="id">ADR-0004</div>
-        <div class="what">MPC 라이브러리 재선정 — 0xCarbon/DKLs23</div>
+        <div class="what">MPC library, take two — 0xCarbon/DKLs23</div>
         <div class="why">
-          키 리프레시를 지원하는 유일한 permissive 후보입니다. 리프레시가 없으면 복구가 주소 변경을
-          동반한 이전이 됩니다. 감사 이력이 없어 자체 감사 비용을 부담하고, 버전 고정과 추상화
-          계층으로 교체 가능성을 유지합니다. 구현 후 실측에서 모든 기준을 통과했습니다.
+          The only permissively licensed candidate that supports key refresh. Without refresh a
+          recovery becomes a migration with a new address. It has no audit history, so we budget for
+          one ourselves, and we keep it replaceable with a version pin and a boundary layer. Once
+          implemented, it passed every budget we had set.
         </div>
       </div>
       <div class="decision">
-        <div class="id">발견 · Phase 1</div>
-        <div class="what">리프레시는 기존 파티 전원을 요구한다</div>
+        <div class="id">Finding · Phase 1</div>
+        <div class="what">Refresh requires every existing party</div>
         <div class="why">
-          셰어를 잃은 자리를 새 기기로 채우는 것은 리프레시가 아니라 리셰어인데, 업스트림에 해당
-          프로토콜이 없습니다. 현재 계획은 사용자 기기에서 키를 복원해 즉시 다시 나누는 것이며, 이
-          순간 개인키가 잠깐 한 곳에 존재합니다. 서버는 이 과정을 보지 않고, 사용자에게 고지합니다.
+          Filling the slot of a lost share on a new device is a reshare, not a refresh, and upstream
+          has no such protocol. Our approach reconstructs the key on the user's device and
+          immediately re-splits it, so the private key briefly exists in one place. The server never
+          sees this, and we tell the user it happens.
         </div>
       </div>
       <div class="decision">
-        <div class="id">발견 · Phase 1</div>
-        <div class="what">업스트림이 현재 stable 의존성에서 빌드되지 않는다</div>
+        <div class="id">Finding · Phase 1</div>
+        <div class="what">Upstream does not build against current stable dependencies</div>
         <div class="why">
-          채택한 라이브러리는 RustCrypto pre-release에 맞춰 발행되었는데 그 뒤 stable이 나왔습니다.
-          해당 버전을 고정해 해결했고, 업스트림에 보고할 예정입니다. 감사와 유지보수 비용을 우리가
-          진다는 판단이 실제로 맞았다는 첫 사례입니다.
+          The library was published against RustCrypto pre-releases, and stable has since landed. We
+          fixed it by pinning those versions, and we will report it upstream. It is the first
+          concrete instance of the maintenance cost we assumed we would be carrying.
         </div>
       </div>
     </div>
@@ -1015,21 +1037,21 @@
 <section id="layout">
   <div class="wrap">
     <div class="sec-head">
-      <p class="eyebrow">저장소</p>
-      <h2>구조</h2>
+      <p class="eyebrow">Repository</p>
+      <h2>Layout</h2>
     </div>
     <pre class="tree">
-<b>crates/mpc-core</b>     프로토콜 코어 — 확장과 서버가 공유하는 단일 진실 공급원
-<b>crates/mpc-wasm</b>     wasm 바인딩 — 타입 변환만, 프로토콜 로직 없음
-<b>crates/mpc-server</b>   셰어 C 보관 + DKG · 복구 참여 (axum · SQLite · Swagger UI)
-<b>packages/extension</b>  크롬 확장 (MV3 · React · WXT)
-<b>packages/sdk</b>        웹페이지용 provider SDK (EIP-1193 / EIP-6963)
-<b>docs/</b>               설계 문서와 ADR
-<b>AGENTS.md</b>           개발 대전제 (CLAUDE.md는 심볼릭 링크)</pre>
+<b>crates/mpc-core</b>     protocol core — the single source of truth, shared by both sides
+<b>crates/mpc-wasm</b>     wasm bindings — type conversion only, no protocol logic
+<b>crates/mpc-server</b>   holds share C, joins DKG and signing (axum, SQLite, Swagger UI)
+<b>packages/extension</b>  the Chrome extension (MV3, React, WXT)
+<b>packages/sdk</b>        provider SDK for web pages (EIP-1193 / EIP-6963)
+<b>docs/</b>               design documents and ADRs
+<b>AGENTS.md</b>           ground rules for contributors (CLAUDE.md symlinks here)</pre>
     <p>
-      <code>make check</code>가 커밋 게이트입니다 — 포매팅, clippy(경고를 에러로), TypeScript
-      strict, 테스트를 한 번에 돌립니다. copyleft 의존성은 <code>cargo-deny</code>가 기계적으로
-      막습니다.
+      <code>make check</code> is the commit gate: formatting, clippy with warnings as errors, strict
+      TypeScript and the test suite in one command. <code>cargo-deny</code> mechanically blocks
+      copyleft dependencies.
     </p>
   </div>
 </section>
@@ -1037,60 +1059,60 @@
 <footer>
   <div class="wrap">
     <span>mpc-ext · Apache-2.0</span>
-    <span>취약점 신고는 GitHub Security Advisory로</span>
-    <span>감사 전까지 실자산에 사용하지 마세요</span>
+    <span>Report vulnerabilities through GitHub Security Advisories</span>
+    <span>Do not use with real assets until it has been audited</span>
   </div>
 </footer>
 
 <script>
   const SCENARIOS = {
     normal: {
-      a: ['signing', '서명 참여'],
-      b: ['held', '대기 — 평시 미사용'],
-      c: ['signing', '서명 참여'],
+      a: ['signing', 'signing'],
+      b: ['held', 'idle — unused day to day'],
+      c: ['signing', 'signing'],
       count: '2 / 3',
-      verdict: '서명 가능 · 확장과 서버가 함께',
-      note: '<b>확장과 서버가 각각 셰어 하나씩으로 함께 서명합니다.</b> 서버는 보관소가 아니라 두 번째 요소입니다 — 확장이 장악되어도 서버가 거부하면 서명은 만들어지지 않습니다.',
+      verdict: 'can sign — extension and server together',
+      note: '<b>The extension and the server each bring one share.</b> The server is a second factor, not a vault — if the extension is compromised and the server refuses, no signature is produced.',
     },
     offline: {
-      a: ['signing', '서명 참여'],
-      b: ['signing', '복구 파일을 불러와 참여'],
-      c: ['lost', '도달 불가'],
+      a: ['signing', 'signing'],
+      b: ['signing', 'loaded from your recovery file'],
+      c: ['lost', 'unreachable'],
       count: '2 / 3',
-      verdict: '서명 가능 · 서버 없이',
-      note: '<b>서비스가 사라져도 자산은 잠기지 않습니다.</b> 서버에 닿지 못하면 확장이 복구 파일을 요구하는 비상 경로를 제시합니다. "키를 인질로 잡지 않는다"는 약속이 실제로 성립하는 지점입니다.',
+      verdict: 'can sign — without the server',
+      note: '<b>Your funds are not locked if the service disappears.</b> When the extension cannot reach the server it offers this fallback and asks for your recovery file. This is where "we do not hold your key hostage" stops being a promise and becomes a property.',
     },
     lost: {
-      a: ['lost', '기기와 함께 분실'],
-      b: ['signing', '복구 파일로 참여'],
-      c: ['signing', '복구 모드로 참여'],
+      a: ['lost', 'lost with the device'],
+      b: ['signing', 'loaded from your recovery file'],
+      c: ['signing', 'joins in recovery mode'],
       count: '2 / 3',
-      verdict: '복구 가능 · 주소 유지',
-      note: '<b>새 기기에 복구 파일을 넣으면 됩니다.</b> 서버는 사용자 인증과 지연 기간을 거친 뒤 참여합니다. 이어서 새 셰어를 발급하고 새 복구 파일을 내보내며, 공개키는 그대로라 주소가 바뀌지 않습니다.',
+      verdict: 'recoverable — same address',
+      note: '<b>Put your recovery file into a new device and you are back.</b> The server joins only after authenticating you and waiting out a cooling-off period. A fresh share is then issued and a new recovery file exported; the public key is unchanged, so your address stays the same.',
     },
     seized: {
-      a: ['lost', '공격자가 탈취'],
-      b: ['held', '다른 곳에 보관 — 안전'],
-      c: ['held', '서버가 거부'],
+      a: ['lost', 'taken by an attacker'],
+      b: ['held', 'stored elsewhere — safe'],
+      c: ['held', 'the server refuses'],
       count: '1 / 3',
-      verdict: '서명 불가 · 공격자는 셰어 하나뿐',
-      note: '<b>확장을 통째로 장악해도 서명은 만들어지지 않습니다.</b> 셰어가 하나뿐이기 때문입니다. 서버는 rate limit과 이상 징후 차단으로 두 번째 요소 역할을 합니다. 다만 <b>복구 파일을 같은 기기에 두었다면</b> 이 방어가 무너집니다.',
+      verdict: 'cannot sign — the attacker holds one share',
+      note: '<b>Taking over the extension entirely still produces no signature</b>, because it holds only one share. The server acts as the second factor with rate limits and anomaly blocking. But <b>if your recovery file sits on the same machine</b>, this defence collapses.',
     },
     export: {
-      a: ['signing', '추출에 참여'],
-      b: ['signing', '추출에 참여'],
-      c: ['held', '관여하지 않음'],
+      a: ['signing', 'takes part in the export'],
+      b: ['signing', 'takes part in the export'],
+      c: ['held', 'not involved'],
       count: '2 / 3',
-      verdict: '완전한 개인키 복원 · 오프라인',
-      note: '<b>사용자는 언제든 키를 꺼낼 수 있습니다.</b> 두 셰어를 합쳐 표준 포맷의 개인키를 복원하며, 서버 없이 오프라인으로 동작합니다. 이 순간 MPC의 이점은 사라지므로 확장이 강하게 경고합니다.',
+      verdict: 'full private key reconstructed — offline',
+      note: '<b>You can take your key out whenever you want.</b> Two shares combine into a standard-format private key, entirely offline and without the server. The MPC benefit disappears at that moment, so the extension warns you loudly.',
     },
     device: {
-      a: ['lost', '기기와 함께 분실'],
-      b: ['lost', '복구 파일 분실'],
-      c: ['held', '홀로 남음 — 서명 불가'],
+      a: ['lost', 'lost with the device'],
+      b: ['lost', 'recovery file lost'],
+      c: ['held', 'alone — cannot sign'],
       count: '1 / 3',
-      verdict: '복구 불가',
-      note: '<b>복구 파일을 잃고 기기도 잃으면 되돌릴 방법이 없습니다.</b> 서버 셰어 하나로는 아무것도 할 수 없습니다. 그래서 복구 파일 내보내기는 온보딩에서 건너뛸 수 없고, 확장과 다른 곳에 보관하도록 안내합니다.',
+      verdict: 'unrecoverable',
+      note: '<b>Lose the recovery file and the device together and there is no way back.</b> The server share alone can do nothing. That is why exporting the recovery file cannot be skipped during onboarding, and why we tell you to keep it away from the extension.',
     },
   };
 

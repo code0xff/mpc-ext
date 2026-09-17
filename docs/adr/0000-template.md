@@ -1,21 +1,21 @@
-# ADR-0000: 제목
+# ADR-0000: Title
 
-- 상태: 제안 | 승인 | 폐기 | 대체됨(ADR-XXXX)
-- 날짜: YYYY-MM-DD
+- Status: proposed | accepted | superseded by ADR-XXXX
+- Date: YYYY-MM-DD
 
-## 맥락
+## Context
 
-무엇을 결정해야 하고, 어떤 제약이 있는가.
+What has to be decided, and under what constraints.
 
-## 검토한 선택지
+## Options considered
 
-| 선택지 | 장점 | 단점 |
+| Option | Pros | Cons |
 | ------ | ---- | ---- |
 
-## 결정
+## Decision
 
-무엇을 선택했고 왜.
+What we chose, and why.
 
-## 결과
+## Consequences
 
-따라오는 영향, 감수하는 트레이드오프, 되돌리는 비용.
+What follows, which trade-offs we accept, and what reversing it would cost.

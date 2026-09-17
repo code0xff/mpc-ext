@@ -1,14 +1,14 @@
-//! `mpc-core`의 wasm 바인딩.
+//! wasm bindings for `mpc-core`.
 //!
-//! 이 계층은 타입 변환과 시간 측정만 담당한다. 프로토콜 로직을 여기에 두지 않는다.
-//! 셰어는 wasm 메모리 안에 머물며, JS로 넘어가는 것은 불투명한 바이트뿐이다.
+//! This layer only converts types. Protocol logic never lives here. Shares stay inside wasm
+//! memory, and all that crosses into JS is opaque bytes.
 
 use mpc_core::{THRESHOLD, TOTAL_PARTIES};
 use wasm_bindgen::prelude::{wasm_bindgen, JsValue};
 
-/// 이 빌드가 사용하는 임계 설정을 `"2-of-3"` 형태로 반환한다.
+/// Reports this build's threshold configuration as `"2-of-3"`.
 ///
-/// 확장 UI가 wasm 로딩 성공 여부를 확인하는 헬스체크로도 쓴다.
+/// The extension UI also uses it as a health check that wasm loaded.
 #[wasm_bindgen]
 pub fn threshold_config() -> String {
     format!("{THRESHOLD}-of-{TOTAL_PARTIES}")
@@ -24,7 +24,7 @@ fn session_from(bytes: &[u8]) -> Result<[u8; 32], JsValue> {
         .map_err(|_| JsValue::from_str("session id must be 32 bytes"))
 }
 
-/// DKG 결과. 셰어는 불투명한 바이트이며, 저장 전에 반드시 암호화해야 한다.
+/// The result of a DKG. Shares are opaque bytes and must be encrypted before storage.
 #[wasm_bindgen]
 #[derive(Debug)]
 pub struct Keyset {
@@ -34,13 +34,13 @@ pub struct Keyset {
 
 #[wasm_bindgen]
 impl Keyset {
-    /// 셰어 개수.
+    /// How many shares there are.
     #[wasm_bindgen(getter)]
     pub fn share_count(&self) -> usize {
         self.shares.len()
     }
 
-    /// `index`번째 셰어의 바이트.
+    /// The bytes of share `index`.
     pub fn share(&self, index: usize) -> Result<Vec<u8>, JsValue> {
         self.shares
             .get(index)
@@ -48,14 +48,14 @@ impl Keyset {
             .ok_or_else(|| JsValue::from_str("share index out of range"))
     }
 
-    /// SEC1 압축 공개키 (33바이트).
+    /// The SEC1 compressed public key, 33 bytes.
     #[wasm_bindgen(getter)]
     pub fn public_key(&self) -> Vec<u8> {
         self.public_key.clone()
     }
 }
 
-/// 3파티 분산 키 생성.
+/// Three-party distributed key generation.
 #[wasm_bindgen]
 pub fn dkg(session_id: &[u8]) -> Result<Keyset, JsValue> {
     let session = session_from(session_id)?;
@@ -66,7 +66,7 @@ pub fn dkg(session_id: &[u8]) -> Result<Keyset, JsValue> {
     })
 }
 
-/// 두 셰어로 서명한다. 65바이트(r‖s‖v)를 반환한다.
+/// Signs with two shares. Returns 65 bytes: r || s || v.
 #[wasm_bindgen]
 pub fn sign(
     share_a: &[u8],
@@ -93,7 +93,7 @@ pub fn sign(
     Ok(out)
 }
 
-/// 세 셰어를 모두 재생성한다. 공개키는 유지된다.
+/// Regenerates all three shares. The public key is preserved.
 #[wasm_bindgen]
 pub fn refresh(keyset: &Keyset, session_id: &[u8]) -> Result<Keyset, JsValue> {
     let session = session_from(session_id)?;
@@ -119,7 +119,7 @@ pub fn refresh(keyset: &Keyset, session_id: &[u8]) -> Result<Keyset, JsValue> {
     })
 }
 
-/// 서명이 공개키에 대해 유효한지 검증한다.
+/// Checks a signature against a public key.
 #[wasm_bindgen]
 pub fn verify(public_key: &[u8], digest: &[u8], signature: &[u8]) -> Result<bool, JsValue> {
     let pk: [u8; 33] = public_key

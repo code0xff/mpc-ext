@@ -5,7 +5,7 @@ import { App } from './App';
 import './style.css';
 
 const root = document.getElementById('root');
-if (!root) throw new Error('#root를 찾을 수 없습니다');
+if (!root) throw new Error('#root not found');
 
 ReactDOM.createRoot(root).render(
   <React.StrictMode>

@@ -1,41 +1,51 @@
-# 키 추출 (Export)
+# Key export
 
-## 원칙
+## Principle
 
-사용자는 자신의 키를 언제든 꺼낼 수 있어야 한다. 이 프로젝트는 키를 인질로 잡지 않는다.
-동시에 export는 **기기 분실에 대비하는 유일한 수단**이다. 잃은 뒤에는 만들 수 없다.
+Users must be able to take their key out at any time. This project does not hold keys hostage.
+At the same time, export is the **only defence against losing the device** — it cannot be
+created after the fact.
 
-## 두 가지 추출
+## Two kinds of export
 
-### 1. 셰어 export (권장, 기본 경로)
+### 1. The recovery file (share B) — **mandatory, cannot be skipped**
 
-- 확장 셰어를 비밀번호로 암호화한 파일로 내보낸다.
-- 용도: 기기 분실 대비 백업 (`recovery.md` 시나리오 2) + 다른 기기로 이전.
-- 포맷: `format_version` + KDF/AEAD 파라미터 + 암호문 + 공개키 (JSON 컨테이너).
-- **크기는 약 230 KB다** (셰어 자체가 114 KB — OT 초기화 상태 포함). 니모닉이나 QR로 만들 수 없으므로 파일로 보관해야 한다 ([adr/0005](adr/0005-share-placement.md)).
-- 파일은 니모닉보다 잃기 쉽다. **복사본을 여러 곳에 두도록 권한다.** 셰어 B 단독으로는 서명할 수 없으므로 복사본이 늘어도 위험이 커지지 않는다.
-- 가져오기 시 파일의 공개키와 지갑의 공개키를 대조해 무결성을 확인한다.
-- 대응하는 **import** 기능이 반드시 함께 있어야 한다. 넣을 수 없는 백업은 백업이 아니다.
+- Right after DKG, share B is exported as a file encrypted with the user's password. The
+  extension never stores B ([adr/0005](adr/0005-share-placement.md)).
+- Used for: recovering a lost device, emergency signing when the server is down, and key export.
+- Format: `format_version` + KDF/AEAD parameters + ciphertext + public key, in a JSON container.
+- **It is roughly 230 KB** (the share itself is ~114 KB because it carries OT setup state). It
+  cannot be turned into a mnemonic or a QR code, so it has to be kept as a file
+  ([adr/0005](adr/0005-share-placement.md)).
+- Files are easier to lose than mnemonics, so **encourage several copies**. Share B alone cannot
+  sign, so extra copies do not increase risk.
+- On import, check the file's public key against the wallet's to confirm integrity.
+- A matching **import** path must always exist. A backup you cannot restore is not a backup.
 
-### 2. 완전 개인키 추출 (위험, 명시적 선택)
+### 2. Full private key export (dangerous, explicit opt-in)
 
-- 2-of-3 셰어를 결합해 단일 개인키를 복원하고 표준 포맷으로 출력한다.
-- 출력: hex 개인키 및 표준 지갑 호환 포맷.
-- 이 순간 MPC의 보안 이점이 사라진다. UI에서 강하게 경고하고, 사용자가 위험을 명시적으로 확인해야 진행한다.
-- 추출 후 해당 키를 폐기하고 새 키로 이전할 것을 권고한다.
+- Combines two of the three shares to reconstruct a single private key and prints it in a
+  standard format (`mpc_core::export_private_key`).
+- Output: hex private key and standard wallet-compatible formats.
+- The MPC security benefit disappears at that moment. The UI warns loudly and the user must
+  explicitly confirm the risk.
+- Afterwards, advise retiring the key and moving to a new one.
 
-## 온보딩 요구
+## Onboarding requirements
 
-- **복구 파일 내보내기는 건너뛸 수 없다.** 내보내기를 완료해야 키 생성이 끝난다. 셰어 B는 이 순간 외에는 만들 수 없기 때문이다.
-- 내보낸 뒤 셰어 B를 확장 메모리에서 zeroize하고, 저장소에 쓰지 않는다.
-- **확장과 다른 곳에 보관하도록 안내한다.** 같은 기기의 기본 다운로드 폴더에 방치하면 셰어 두 개가 한곳에 모인다.
-- 복구 파일을 잃고 기기도 잃으면 복구할 수 없다는 사실을 명확히 고지한다.
-- 셰어가 리프레시/리셰어되면 기존 복구 파일은 무효가 된다. 새 파일을 내보내고 옛 파일을 폐기하도록 안내한다.
+- **Exporting the recovery file cannot be skipped.** Key creation is not complete until the
+  export is confirmed, because share B can never be produced again.
+- After the export, zeroize share B in the extension's memory and never write it to storage.
+- **Tell the user to store it away from the extension.** Leaving it in the default downloads
+  folder on the same machine puts two shares in one place.
+- State plainly that losing the recovery file and the device together is unrecoverable.
+- Refresh or reshare invalidates the existing recovery file. Prompt for a new export and tell the
+  user to destroy the old one.
 
-## 절차 요구
+## Procedural requirements
 
-- 추출 전 비밀번호 재입력을 요구한다.
-- 평문 키는 사용자가 직접 저장하게 하고, 확장이 평문으로 디스크에 쓰지 않는다.
-- 클립보드 복사 시 일정 시간 후 자동 비우기.
-- 추출 사실을 로컬 이벤트 로그에 남긴다 (키 값은 남기지 않는다).
-- export / import 모두 서버 없이 완전히 오프라인으로 동작해야 한다.
+- Require the password again before exporting.
+- Let the user save the plaintext key themselves; the extension never writes it to disk.
+- Clear the clipboard automatically after a short delay.
+- Record that an export happened in the local event log (never the key material).
+- Export and import must work fully offline, without the server.

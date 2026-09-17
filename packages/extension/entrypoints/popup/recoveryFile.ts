@@ -1,12 +1,12 @@
 /**
- * 복구 파일(셰어 B) 내보내기.
+ * Exporting the recovery file (share B).
  *
- * 셰어 전체를 담기 때문에 약 230 KB다. 니모닉이나 QR로 만들 수 없다
- * (`docs/adr/0005-share-placement.md`).
+ * It carries the whole share, so it is about 230 KB and cannot be turned into a mnemonic or a QR
+ * code (`docs/adr/0005-share-placement.md`).
  */
 import type { CreatedKey } from '../../src/messages';
 
-/** 복구 파일 컨테이너. `publicKey`는 가져오기 시 무결성 대조에 쓴다. */
+/** The recovery file container. `publicKey` is used to check integrity on import. */
 export interface RecoveryFile {
   formatVersion: 1;
   kind: 'mpc-ext-recovery';
@@ -23,7 +23,7 @@ export function buildRecoveryFile(created: CreatedKey): RecoveryFile {
     createdAt: new Date().toISOString(),
     publicKey: created.publicKeyHex,
     share: created.recoveryShareHex,
-    note: 'mpc-ext 복구 파일 (셰어 B). 확장과 다른 곳에 보관하세요. 이 파일 하나만으로는 서명할 수 없습니다.',
+    note: 'mpc-ext recovery file (share B). Store it somewhere other than the extension. This file alone cannot sign.',
   };
 }
 
