@@ -3,12 +3,14 @@ import { useCallback, useEffect, useState } from 'react';
 import type { CreatedKey, Status, WasmHealth } from '../../src/messages';
 import { send } from './api';
 import { downloadRecoveryFile } from './recoveryFile';
+import { SignPanel } from './SignPanel';
 
 export function App() {
   const [status, setStatus] = useState<Status>();
   const [health, setHealth] = useState<WasmHealth>();
   const [created, setCreated] = useState<CreatedKey>();
   const [downloaded, setDownloaded] = useState(false);
+  const [serverUp, setServerUp] = useState<boolean>();
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string>();
 
@@ -19,6 +21,9 @@ export function App() {
   useEffect(() => {
     void refresh().catch(showError);
     void send<WasmHealth>({ type: 'wasmHealth' }).then(setHealth).catch(showError);
+    void send<boolean>({ type: 'serverHealth' })
+      .then(setServerUp)
+      .catch(() => setServerUp(false));
   }, [refresh]);
 
   function showError(cause: unknown) {
@@ -51,6 +56,10 @@ export function App() {
           <dd id="wallet-status">{status ? describe(status) : 'Checking…'}</dd>
           <dt>MPC engine</dt>
           <dd>{health ? `${health.config}, loaded in ${health.loadMs} ms` : 'Checking…'}</dd>
+          <dt>Server</dt>
+          <dd className={serverUp === false ? 'warn' : undefined}>
+            {serverUp === undefined ? 'Checking…' : serverUp ? 'Reachable' : 'Unreachable'}
+          </dd>
         </dl>
       </section>
 
@@ -133,7 +142,6 @@ export function App() {
         <section>
           <h2>Wallet</h2>
           <p className="mono">{status.publicKeyHex}</p>
-          <p>Signing becomes available once the server integration lands.</p>
           <button
             type="button"
             id="lock"
@@ -148,6 +156,8 @@ export function App() {
           </button>
         </section>
       )}
+
+      {status?.kind === 'unlocked' && <SignPanel serverUp={serverUp} />}
 
       {error && (
         <p className="error" id="error">

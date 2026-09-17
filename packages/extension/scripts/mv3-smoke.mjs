@@ -7,10 +7,12 @@
  *
  * Run with: pnpm -C packages/extension smoke
  */
+import { spawn } from 'node:child_process';
 import { existsSync, readdirSync } from 'node:fs';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { setTimeout as delay } from 'node:timers/promises';
 
 import puppeteer from 'puppeteer-core';
 
@@ -50,6 +52,51 @@ if (!CHROME) {
   );
   process.exit(1);
 }
+
+/**
+ * The extension now needs the server to take part in DKG and signing, so the smoke test runs a
+ * real one against a throwaway database.
+ */
+const SERVER_BIN = new URL('../../../target/release/mpc-server', import.meta.url).pathname;
+
+if (!existsSync(SERVER_BIN)) {
+  console.error('No server binary found. Run `make build-server` first.');
+  process.exit(1);
+}
+
+const serverDir = await mkdtemp(join(tmpdir(), 'mpc-ext-server-'));
+const server = spawn(SERVER_BIN, [], {
+  stdio: 'inherit',
+  env: {
+    ...process.env,
+    MPC_SERVER_ADDR: '127.0.0.1:8080',
+    MPC_SERVER_DATABASE: `sqlite://${join(serverDir, 'smoke.db')}`,
+    // A throwaway key for this run only. Never reuse a test key anywhere real.
+    MPC_SERVER_SEALING_KEY: '11'.repeat(32),
+    RUST_LOG: 'warn',
+  },
+});
+
+// Wait for the server to answer before driving the extension.
+let serverUp = false;
+for (let attempt = 0; attempt < 50; attempt += 1) {
+  try {
+    const response = await fetch('http://127.0.0.1:8080/v1/health');
+    if (response.ok) {
+      serverUp = true;
+      break;
+    }
+  } catch {
+    // Not listening yet.
+  }
+  await delay(200);
+}
+if (!serverUp) {
+  server.kill();
+  console.error('The server did not come up on 127.0.0.1:8080.');
+  process.exit(1);
+}
+console.log('server ready on 127.0.0.1:8080');
 
 const profile = await mkdtemp(join(tmpdir(), 'mpc-ext-smoke-'));
 const browser = await puppeteer.launch({
@@ -143,10 +190,33 @@ try {
       throw new Error('a plaintext share survived in storage');
     }
 
+    // Everyday signing: extension share plus the server share.
+    const digestHex = 'ab'.repeat(32);
+    const signStarted = performance.now();
+    const signed = await expect({ type: 'sign', digestHex }, 'signing');
+    const signMs = Math.round(performance.now() - signStarted);
+    if (signed.via !== 'server') throw new Error(`expected the server path, got ${signed.via}`);
+    if (signed.signatureHex.length !== 130) throw new Error('a signature is 65 bytes');
+
+    // The offline path: extension share plus the recovery file, no server involved.
+    const offline = await expect(
+      { type: 'signOffline', digestHex, recoveryShareHex: created.recoveryShareHex },
+      'offline signing',
+    );
+    if (offline.via !== 'recoveryFile') throw new Error('expected the recovery-file path');
+    if (offline.signatureHex.length !== 130) throw new Error('a signature is 65 bytes');
+
+    // Locked wallets must not sign.
+    await expect({ type: 'lock' }, 'lock');
+    const refused = await send({ type: 'sign', digestHex });
+    if (refused.ok) throw new Error('a locked wallet produced a signature');
+    await expect({ type: 'unlock', password: 'correct horse' }, 'unlock');
+
     return {
       config: health.config,
       loadMs: health.loadMs,
       dkgMs,
+      signMs,
       publicKey: created.publicKeyHex,
       recoveryShareBytes: created.recoveryShareHex.length / 2,
     };
@@ -155,21 +225,25 @@ try {
   console.log('\n--- measured inside the MV3 service worker ---');
   console.log(`threshold        ${result.config}`);
   console.log(`wasm load        ${result.loadMs} ms`);
-  console.log(`DKG (3 parties)  ${result.dkgMs} ms`);
+  console.log(`DKG (3 parties)  ${result.dkgMs} ms   (extension + server)`);
+  console.log(`signing          ${result.signMs} ms   (extension + server)`);
   console.log(`public key       ${result.publicKey.slice(0, 24)}…`);
   console.log(`recovery share   ${result.recoveryShareBytes} bytes`);
 
   if (result.config !== '2-of-3') throw new Error(`unexpected threshold: ${result.config}`);
   if (result.publicKey.length !== 66) throw new Error('the public key is not 33 bytes');
   console.log(
-    '\nPASS: DKG, atomic onboarding and lock/unlock all work inside the MV3 service worker.',
+    '\nPASS: DKG with the server, atomic onboarding, everyday signing, the offline fallback\n' +
+      '      and lock/unlock all work inside the MV3 service worker.',
   );
 } catch (error) {
   failed = true;
   console.error('\nFAIL:', error.message);
 } finally {
   await browser.close();
+  server.kill();
   await rm(profile, { recursive: true, force: true });
+  await rm(serverDir, { recursive: true, force: true });
 }
 
 process.exit(failed ? 1 : 0);

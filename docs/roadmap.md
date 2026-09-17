@@ -38,10 +38,11 @@
 - [x] Per-party session API — round state sealed and stored between requests
 - [x] `mpc-server` joins DKG (SQLite + OpenAPI/Swagger UI, spec pinned in `docs/openapi.json`)
 - [x] **Everyday signing transport** — extension (A) ↔ server (C) round exchange, verified end to end over HTTP
-- [ ] The A+B emergency signing path for server outages
+- [x] The A+B emergency signing path for server outages (offline, no server involved)
 - [ ] Recovery flow (B+C) and reshare
+- [ ] Make the server URL configurable, for self-hosting
 - [ ] Settle the server authentication design (cooling-off, notification, cancellation)
-- [ ] Signing approval UI
+- [x] Signing approval UI (digest-level; the origin-aware screen arrives with the provider)
 
 ## Phase 4 — web integration
 

@@ -5,9 +5,11 @@
  * worker's memory, so the wallet locks itself whenever the worker is terminated
  * (`docs/architecture.md`).
  */
-import type { CreatedKey, Request, Response, Status, WasmHealth } from '../src/messages';
+import type { CreatedKey, Request, Response, Signed, Status, WasmHealth } from '../src/messages';
+import { runDkg, signWithRecoveryFile, signWithServer } from '../src/protocolRunner';
+import { DEFAULT_SERVER, health as serverHealth, ServerUnreachable } from '../src/serverClient';
 import * as vault from '../src/vault';
-import { loadWasm, threshold_config, wasmDkg } from '../src/wasm';
+import { loadWasm, threshold_config } from '../src/wasm';
 
 /** The decrypted share A. Disappears with the worker, and is never persisted. */
 let unlockedShare: Uint8Array | undefined;
@@ -20,14 +22,27 @@ let unlockedShare: Uint8Array | undefined;
  * gone forever and the wallet unusable. So both are held in memory and committed together:
  * a failure leaves no trace at all.
  */
-let pending: { shareA: Uint8Array; publicKeyHex: string; password: string } | undefined;
+let pending:
+  { shareA: Uint8Array; publicKeyHex: string; walletId: string; password: string } | undefined;
 
 function toHex(bytes: Uint8Array): string {
   return [...bytes].map((b) => b.toString(16).padStart(2, '0')).join('');
 }
 
+function fromHex(value: string): Uint8Array {
+  if (value.length % 2 !== 0) throw new Error('Hex input has an odd length.');
+  return Uint8Array.from({ length: value.length / 2 }, (_, i) =>
+    Number.parseInt(value.slice(i * 2, i * 2 + 2), 16),
+  );
+}
+
 function wipe(bytes: Uint8Array | undefined): void {
   bytes?.fill(0);
+}
+
+function requireUnlocked(): Uint8Array {
+  if (!unlockedShare) throw new Error('The wallet is locked.');
+  return unlockedShare;
 }
 
 async function status(): Promise<Status> {
@@ -42,9 +57,9 @@ async function status(): Promise<Status> {
 /**
  * Creates a key.
  *
- * DKG produces three shares, but the extension **keeps only A.** B is handed back so the user
- * can store it as a recovery file, and C belongs to the server
- * (`docs/adr/0005-share-placement.md`).
+ * DKG runs across three parties — two here, one on the server — but the extension **keeps only
+ * A.** B is handed back so the user can store it as a recovery file, and C stays with the
+ * server (`docs/adr/0005-share-placement.md`).
  */
 async function createKey(password: string): Promise<CreatedKey> {
   if (password.length < 8) throw new Error('The password must be at least 8 characters.');
@@ -52,25 +67,29 @@ async function createKey(password: string): Promise<CreatedKey> {
 
   await loadWasm();
   const sessionId = crypto.getRandomValues(new Uint8Array(32));
-  const keyset = wasmDkg(sessionId);
+  const walletId = crypto.randomUUID();
 
-  const shareA = keyset.share(0);
-  const shareB = keyset.share(1);
-  const publicKeyHex = toHex(keyset.public_key);
+  const outcome = await runDkg(DEFAULT_SERVER, walletId, sessionId);
 
-  pending = { shareA, publicKeyHex, password };
+  pending = {
+    shareA: outcome.extensionShare,
+    publicKeyHex: outcome.publicKeyHex,
+    walletId,
+    password,
+  };
+
   // Share B is handed over here and left nowhere in worker memory.
-  const recoveryShareHex = toHex(shareB);
-  wipe(shareB);
+  const recoveryShareHex = toHex(outcome.recoveryShare);
+  wipe(outcome.recoveryShare);
 
-  return { publicKeyHex, recoveryShareHex };
+  return { publicKeyHex: outcome.publicKeyHex, recoveryShareHex };
 }
 
 /** The recovery file is saved. Only now do we store share A. */
 async function confirmRecoverySaved(): Promise<Status> {
   if (!pending) throw new Error('There is no key waiting to be stored.');
 
-  await vault.store(pending.password, pending.shareA, pending.publicKeyHex);
+  await vault.store(pending.password, pending.shareA, pending.publicKeyHex, pending.walletId);
   unlockedShare = pending.shareA;
   // JS strings cannot be wiped; dropping the reference and leaving it to the GC is the best
   // we can do.
@@ -97,6 +116,49 @@ function lock(): void {
   unlockedShare = undefined;
 }
 
+/**
+ * Signs using the extension share and the server share.
+ *
+ * If the server cannot be reached the error says so, and the UI offers the recovery-file path
+ * instead (`docs/recovery.md`, scenario 0).
+ */
+async function sign(digestHex: string): Promise<Signed> {
+  const share = requireUnlocked();
+  const walletId = await vault.walletId();
+  if (!walletId) throw new Error('This wallet has no server registration.');
+
+  await loadWasm();
+  const signId = crypto.getRandomValues(new Uint8Array(32));
+  const signature = await signWithServer(
+    DEFAULT_SERVER,
+    walletId,
+    share,
+    signId,
+    fromHex(digestHex),
+  );
+
+  return { signatureHex: toHex(signature), via: 'server' };
+}
+
+/**
+ * Signs using the extension share and a recovery file, entirely offline.
+ *
+ * The recovery share is used for this signature and then wiped. It is never stored.
+ */
+async function signOffline(digestHex: string, recoveryShareHex: string): Promise<Signed> {
+  const share = requireUnlocked();
+  await loadWasm();
+
+  const recoveryShare = fromHex(recoveryShareHex);
+  try {
+    const signId = crypto.getRandomValues(new Uint8Array(32));
+    const signature = signWithRecoveryFile(share, recoveryShare, signId, fromHex(digestHex));
+    return { signatureHex: toHex(signature), via: 'recoveryFile' };
+  } finally {
+    wipe(recoveryShare);
+  }
+}
+
 async function handle(request: Request): Promise<unknown> {
   switch (request.type) {
     case 'status':
@@ -110,6 +172,8 @@ async function handle(request: Request): Promise<unknown> {
       };
       return health;
     }
+    case 'serverHealth':
+      return serverHealth(DEFAULT_SERVER);
     case 'createKey':
       return createKey(request.password);
     case 'confirmRecoverySaved':
@@ -122,6 +186,10 @@ async function handle(request: Request): Promise<unknown> {
     case 'lock':
       lock();
       return status();
+    case 'sign':
+      return sign(request.digestHex);
+    case 'signOffline':
+      return signOffline(request.digestHex, request.recoveryShareHex);
     default: {
       const exhaustive: never = request;
       throw new Error(`Unknown request: ${JSON.stringify(exhaustive)}`);
@@ -136,10 +204,13 @@ export default defineBackground(() => {
         .then((value) => sendResponse({ ok: true, value }))
         // Pass a string only, so no secret can ride along in an error object.
         .catch((error: unknown) => {
-          sendResponse({
-            ok: false,
-            error: error instanceof Error ? error.message : String(error),
-          });
+          const message =
+            error instanceof ServerUnreachable
+              ? error.message
+              : error instanceof Error
+                ? error.message
+                : String(error);
+          sendResponse({ ok: false, error: message });
         });
       // Signals that we will respond asynchronously.
       return true;

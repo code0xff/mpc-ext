@@ -9,7 +9,7 @@
  */
 
 const STORAGE_KEY = 'vault';
-const FORMAT_VERSION = 1;
+const FORMAT_VERSION = 2;
 const PBKDF2_ITERATIONS = 600_000;
 
 interface VaultRecord {
@@ -21,6 +21,8 @@ interface VaultRecord {
   ciphertextB64: string;
   /** Public information that can be shown while locked. */
   publicKeyHex: string;
+  /** Identifies this wallet to the server. Not a secret. */
+  walletId: string;
 }
 
 function toB64(bytes: Uint8Array): string {
@@ -60,6 +62,7 @@ export async function store(
   password: string,
   share: Uint8Array,
   publicKeyHex: string,
+  walletId: string,
 ): Promise<void> {
   const salt = crypto.getRandomValues(new Uint8Array(16));
   // A fresh nonce per record. Reuse breaks AES-GCM.
@@ -81,6 +84,7 @@ export async function store(
     ivB64: toB64(iv),
     ciphertextB64: toB64(ciphertext),
     publicKeyHex,
+    walletId,
   };
   await chrome.storage.local.set({ [STORAGE_KEY]: record });
 }
@@ -98,6 +102,11 @@ export async function exists(): Promise<boolean> {
 /** The public key, readable even while locked. */
 export async function publicKeyHex(): Promise<string | undefined> {
   return (await read())?.publicKeyHex;
+}
+
+/** The wallet id the server knows us by. Readable while locked; it is not a secret. */
+export async function walletId(): Promise<string | undefined> {
+  return (await read())?.walletId;
 }
 
 /** Decrypts the share with the password. Returns `undefined` if the password is wrong. */

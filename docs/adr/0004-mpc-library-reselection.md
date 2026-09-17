@@ -102,6 +102,27 @@ Conditions and caveats:
 - V8 wasm is the same engine as Chrome but is not an MV3 service worker. Worker termination and
   wasm instantiation cost were measured separately in Phase 2 (wasm load: 5 ms).
 
+### Phase 3 measurements — the real deployment (2026-09-18)
+
+The numbers above drive all three parties in one place. These are the split deployment, measured
+inside a real MV3 service worker with a real server on localhost.
+
+| Operation           | Everything local (wasm) | Extension + server | Budget | Result |
+| ------------------- | ----------------------- | ------------------ | ------ | ------ |
+| DKG (3 parties)     | 4,920 ms                | **9,084 ms**       | 10 s   | pass   |
+| Signing (2 parties) | 16 ms                   | **41 ms**          | 1 s    | pass   |
+
+Splitting costs roughly 2× on DKG — HTTP round trips plus serializing ~114 KB shares across the
+wasm boundary and the wire several times. Signing stays comfortable.
+
+One lesson worth keeping: the first split measurement was **12,729 ms for DKG, over budget**. The
+cause was encoding envelope payloads as JSON arrays of numbers when crossing from wasm to JS.
+Switching that boundary to base64 brought DKG to 9,084 ms and signing from 92 ms to 41 ms. For
+100 KB payloads the encoding choice at a language boundary dominates.
+
+These are localhost numbers. Real network latency adds to signing, so the 1 s budget should be
+re-checked against a deployed server.
+
 ### Finding 1 — upstream does not build against current stable RustCrypto
 
 `dkls23-core 0.5.1` was published against `elliptic-curve 0.14.0-rc.29` and `k256 0.14.0-rc.8`.

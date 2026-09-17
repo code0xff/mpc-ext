@@ -76,6 +76,8 @@ jobs:
       - run: pnpm install --frozen-lockfile
       - run: make build-wasm
       - run: pnpm -C packages/extension build
+      # The smoke test drives a real server, so it needs the binary.
+      - run: make build-server
       # Chrome 137 and later ignore --load-extension in the regular browser.
       - run: pnpm dlx @puppeteer/browsers install chrome@stable
       - run: pnpm -C packages/extension smoke

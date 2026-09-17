@@ -1304,8 +1304,11 @@ dependencies = [
 name = "mpc-wasm"
 version = "0.0.1"
 dependencies = [
+ "base64 0.23.1",
  "getrandom 0.4.3",
  "mpc-core",
+ "serde",
+ "serde_json",
  "wasm-bindgen",
 ]
 

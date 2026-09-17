@@ -16,11 +16,19 @@ export type Status =
 export type Request =
   | { type: 'status' }
   | { type: 'wasmHealth' }
+  | { type: 'serverHealth' }
   | { type: 'createKey'; password: string }
   | { type: 'confirmRecoverySaved' }
   | { type: 'cancelOnboarding' }
   | { type: 'unlock'; password: string }
-  | { type: 'lock' };
+  | { type: 'lock' }
+  /** Sign with the extension share and the server share — the everyday path. */
+  | { type: 'sign'; digestHex: string }
+  /**
+   * Sign with the extension share and a recovery file, for when the server is unreachable.
+   * The recovery share is used once and never stored.
+   */
+  | { type: 'signOffline'; digestHex: string; recoveryShareHex: string };
 
 export type Response<T> = { ok: true; value: T } | { ok: false; error: string };
 
@@ -34,4 +42,12 @@ export interface CreatedKey {
 export interface WasmHealth {
   config: string;
   loadMs: number;
+}
+
+/** A completed signature. */
+export interface Signed {
+  /** 65 bytes as hex: r || s || v. */
+  signatureHex: string;
+  /** Which path produced it, so the UI can say so. */
+  via: 'server' | 'recoveryFile';
 }

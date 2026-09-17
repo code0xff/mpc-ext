@@ -36,6 +36,7 @@ export default tseslint.config(
         // Code inside page.evaluate runs in the browser context.
         chrome: 'readonly',
         performance: 'readonly',
+        fetch: 'readonly',
       },
     },
     rules: { 'no-console': 'off' },

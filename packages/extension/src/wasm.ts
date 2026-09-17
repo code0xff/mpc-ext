@@ -6,8 +6,8 @@
  * worker lifetime. Measured cost: about 5 ms.
  */
 import init, {
-  dkg as wasmDkg,
-  sign as wasmSign,
+  DkgSession,
+  SignSession,
   threshold_config,
   verify as wasmVerify,
 } from '../wasm/mpc_wasm.js';
@@ -22,4 +22,4 @@ export function loadWasm(): Promise<void> {
   return ready;
 }
 
-export { threshold_config, wasmDkg, wasmSign, wasmVerify };
+export { DkgSession, SignSession, threshold_config, wasmVerify };

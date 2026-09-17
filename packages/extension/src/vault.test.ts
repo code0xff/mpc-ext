@@ -23,6 +23,7 @@ vi.stubGlobal('chrome', {
 
 const SHARE = new Uint8Array([1, 2, 3, 4, 5, 6, 7, 8]);
 const PUBLIC_KEY = '02'.padEnd(66, 'a');
+const WALLET_ID = '11111111-2222-3333-4444-555555555555';
 
 describe('vault', () => {
   beforeEach(() => storage.clear());
@@ -32,20 +33,20 @@ describe('vault', () => {
   });
 
   it('returns the share for the right password', async () => {
-    await vault.store('correct horse', SHARE, PUBLIC_KEY);
+    await vault.store('correct horse', SHARE, PUBLIC_KEY, WALLET_ID);
 
     expect(await vault.exists()).toBe(true);
     expect(await vault.unlock('correct horse')).toEqual(SHARE);
   });
 
   it('does not open with the wrong password', async () => {
-    await vault.store('correct horse', SHARE, PUBLIC_KEY);
+    await vault.store('correct horse', SHARE, PUBLIC_KEY, WALLET_ID);
 
     expect(await vault.unlock('wrong horse')).toBeUndefined();
   });
 
   it('leaves no plaintext share in storage', async () => {
-    await vault.store('correct horse', SHARE, PUBLIC_KEY);
+    await vault.store('correct horse', SHARE, PUBLIC_KEY, WALLET_ID);
 
     const serialized = JSON.stringify([...storage.values()]);
     // The share bytes must not survive in any recognisable form.
@@ -54,9 +55,9 @@ describe('vault', () => {
   });
 
   it('uses a fresh salt and nonce per record', async () => {
-    await vault.store('same password', SHARE, PUBLIC_KEY);
+    await vault.store('same password', SHARE, PUBLIC_KEY, WALLET_ID);
     const first = structuredClone(storage.get('vault')) as Record<string, string>;
-    await vault.store('same password', SHARE, PUBLIC_KEY);
+    await vault.store('same password', SHARE, PUBLIC_KEY, WALLET_ID);
     const second = storage.get('vault') as Record<string, string>;
 
     expect(first.saltB64).not.toBe(second.saltB64);
@@ -64,8 +65,22 @@ describe('vault', () => {
     expect(first.ciphertextB64).not.toBe(second.ciphertextB64);
   });
 
+  it('exposes the wallet id even while locked', async () => {
+    await vault.store('correct horse', SHARE, PUBLIC_KEY, WALLET_ID);
+
+    expect(await vault.walletId()).toBe(WALLET_ID);
+  });
+
+  it('refuses a record written by an older format', async () => {
+    await vault.store('correct horse', SHARE, PUBLIC_KEY, WALLET_ID);
+    const record = storage.get('vault') as Record<string, unknown>;
+    storage.set('vault', { ...record, formatVersion: 1 });
+
+    await expect(vault.unlock('correct horse')).rejects.toThrow(/storage format/);
+  });
+
   it('exposes the public key even while locked', async () => {
-    await vault.store('correct horse', SHARE, PUBLIC_KEY);
+    await vault.store('correct horse', SHARE, PUBLIC_KEY, WALLET_ID);
 
     expect(await vault.publicKeyHex()).toBe(PUBLIC_KEY);
   });
@@ -81,7 +96,7 @@ describe('vault at realistic share sizes', () => {
     // is about, so use a deterministic pattern.
     const large = Uint8Array.from({ length: 120_000 }, (_, i) => (i * 31) % 256);
 
-    await vault.store('correct horse', large, PUBLIC_KEY);
+    await vault.store('correct horse', large, PUBLIC_KEY, WALLET_ID);
 
     expect(await vault.unlock('correct horse')).toEqual(large);
   });
