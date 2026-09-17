@@ -1,0 +1,978 @@
+<title>mpc-ext</title>
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link
+  rel="stylesheet"
+  href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@400;500;600;700&family=Source+Serif+4:ital,opsz,wght@0,8..60,400;0,8..60,600;1,8..60,400&display=swap"
+/>
+
+<style>
+  /* ---- tokens: light (bare :root defines the complete palette) ---- */
+  :root {
+    --ground: #f5f6fb;
+    --surface: #ffffff;
+    --sunken: #eceff7;
+    --ink: #13172a;
+    --ink-2: #474d66;
+    --ink-3: #797f9a;
+    --rule: #dcdfed;
+    --rule-strong: #c2c7dc;
+    --accent: #3b4bd0;
+    --accent-ink: #ffffff;
+    --accent-soft: #e6e9fc;
+    --ok: #16704f;
+    --ok-soft: #dcf0e6;
+    --warn: #8a5600;
+    --warn-soft: #fbeed6;
+    --crit: #a81f18;
+    --crit-soft: #fae3e1;
+
+    --f-sans:
+      'IBM Plex Sans', ui-sans-serif, system-ui, -apple-system, 'Helvetica Neue', sans-serif;
+    --f-serif: 'Source Serif 4', ui-serif, Georgia, 'Times New Roman', serif;
+    --f-mono: 'IBM Plex Mono', ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+
+    --s--1: 0.8125rem;
+    --s-0: 1rem;
+    --s-1: 1.1875rem;
+    --s-2: 1.4375rem;
+    --s-3: 1.875rem;
+    --s-4: clamp(2.1rem, 1.5rem + 2.6vw, 3.1rem);
+
+    --spine: 66ch;
+    --wide: 60rem;
+  }
+
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme='light']) {
+      --ground: #0b0e18;
+      --surface: #141827;
+      --sunken: #1c2133;
+      --ink: #e9ebf6;
+      --ink-2: #a8adc4;
+      --ink-3: #767c96;
+      --rule: #262b3e;
+      --rule-strong: #39405a;
+      --accent: #8d97f2;
+      --accent-ink: #0b0e18;
+      --accent-soft: #212747;
+      --ok: #62cfa4;
+      --ok-soft: #122c24;
+      --warn: #e0a850;
+      --warn-soft: #2e2415;
+      --crit: #f0837b;
+      --crit-soft: #331b1b;
+    }
+  }
+
+  :root[data-theme='dark'] {
+    --ground: #0b0e18;
+    --surface: #141827;
+    --sunken: #1c2133;
+    --ink: #e9ebf6;
+    --ink-2: #a8adc4;
+    --ink-3: #767c96;
+    --rule: #262b3e;
+    --rule-strong: #39405a;
+    --accent: #8d97f2;
+    --accent-ink: #0b0e18;
+    --accent-soft: #212747;
+    --ok: #62cfa4;
+    --ok-soft: #122c24;
+    --warn: #e0a850;
+    --warn-soft: #2e2415;
+    --crit: #f0837b;
+    --crit-soft: #331b1b;
+  }
+
+  * {
+    box-sizing: border-box;
+  }
+
+  body {
+    margin: 0;
+    background: var(--ground);
+    color: var(--ink);
+    font-family: var(--f-serif);
+    font-size: var(--s-0);
+    line-height: 1.65;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  .wrap {
+    max-width: var(--wide);
+    margin-inline: auto;
+    padding-inline: 20px;
+  }
+
+  h1,
+  h2,
+  h3 {
+    font-family: var(--f-sans);
+    text-wrap: balance;
+    line-height: 1.18;
+    letter-spacing: -0.015em;
+    margin: 0;
+  }
+
+  p {
+    margin: 0;
+    max-width: var(--spine);
+  }
+
+  a {
+    color: var(--accent);
+    text-underline-offset: 2px;
+    text-decoration-thickness: from-font;
+  }
+
+  code,
+  .mono {
+    font-family: var(--f-mono);
+    font-size: 0.9em;
+  }
+
+  :focus-visible {
+    outline: 2px solid var(--accent);
+    outline-offset: 3px;
+    border-radius: 2px;
+  }
+
+  .eyebrow {
+    font-family: var(--f-mono);
+    font-size: var(--s--1);
+    font-weight: 500;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    color: var(--ink-3);
+    margin: 0;
+  }
+
+  /* ---- masthead ---- */
+  .masthead {
+    border-bottom: 1px solid var(--rule);
+    background: var(--surface);
+  }
+
+  .masthead .wrap {
+    padding-block: clamp(2.5rem, 7vw, 4.5rem) clamp(2rem, 5vw, 3rem);
+    display: flex;
+    flex-direction: column;
+    gap: 1.5rem;
+  }
+
+  .title {
+    font-family: var(--f-mono);
+    font-size: var(--s-4);
+    font-weight: 600;
+    letter-spacing: -0.03em;
+  }
+
+  .title span {
+    color: var(--ink-3);
+  }
+
+  .lede {
+    font-size: var(--s-1);
+    color: var(--ink-2);
+    max-width: 54ch;
+  }
+
+  .meta-row {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.5rem 1.25rem;
+    align-items: center;
+    font-family: var(--f-mono);
+    font-size: var(--s--1);
+    color: var(--ink-3);
+  }
+
+  .pill {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.4em;
+    padding: 0.25em 0.7em;
+    border-radius: 999px;
+    font-family: var(--f-mono);
+    font-size: var(--s--1);
+    font-weight: 500;
+    letter-spacing: 0.01em;
+  }
+
+  .pill-warn {
+    background: var(--warn-soft);
+    color: var(--warn);
+  }
+
+  .dot {
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+    background: currentColor;
+    flex: none;
+  }
+
+  /* ---- sections ---- */
+  section {
+    border-bottom: 1px solid var(--rule);
+  }
+
+  section > .wrap {
+    padding-block: clamp(3rem, 7vw, 4.75rem);
+    display: flex;
+    flex-direction: column;
+    gap: 1.75rem;
+  }
+
+  .sec-head {
+    display: flex;
+    flex-direction: column;
+    gap: 0.6rem;
+  }
+
+  .sec-head h2 {
+    font-size: var(--s-3);
+  }
+
+  /* ---- share diagram ---- */
+  .scenarios {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.5rem;
+  }
+
+  .tab {
+    font-family: var(--f-sans);
+    font-size: var(--s--1);
+    font-weight: 500;
+    color: var(--ink-2);
+    background: var(--surface);
+    border: 1px solid var(--rule-strong);
+    border-radius: 999px;
+    padding: 0.45em 1em;
+    cursor: pointer;
+    transition:
+      background 0.15s,
+      color 0.15s,
+      border-color 0.15s;
+  }
+
+  .tab:hover {
+    border-color: var(--accent);
+    color: var(--ink);
+  }
+
+  .tab[aria-selected='true'] {
+    background: var(--accent);
+    border-color: var(--accent);
+    color: var(--accent-ink);
+  }
+
+  .stage {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 1rem;
+    align-items: stretch;
+  }
+
+  .zone {
+    background: var(--surface);
+    border: 1px solid var(--rule);
+    border-radius: 10px;
+    padding: 1.1rem 1.1rem 1.25rem;
+    display: flex;
+    flex-direction: column;
+    gap: 0.9rem;
+  }
+
+  .zone-head {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: 0.75rem;
+    border-bottom: 1px solid var(--rule);
+    padding-bottom: 0.65rem;
+  }
+
+  .zone-head strong {
+    font-family: var(--f-sans);
+    font-size: var(--s-0);
+    font-weight: 600;
+  }
+
+  .zone-head .mono {
+    color: var(--ink-3);
+    font-size: var(--s--1);
+  }
+
+  .shares {
+    display: flex;
+    flex-direction: column;
+    gap: 0.6rem;
+  }
+
+  .share {
+    display: grid;
+    grid-template-columns: 2.2rem 1fr;
+    align-items: center;
+    gap: 0.85rem;
+    padding: 0.7rem 0.85rem;
+    border: 1px solid var(--rule);
+    border-left-width: 3px;
+    border-left-color: var(--rule-strong);
+    border-radius: 7px;
+    background: var(--sunken);
+    transition:
+      border-left-color 0.2s,
+      background 0.2s,
+      opacity 0.2s;
+  }
+
+  .share .key {
+    font-family: var(--f-mono);
+    font-size: var(--s-1);
+    font-weight: 600;
+    text-align: center;
+    color: var(--ink-3);
+    transition: color 0.2s;
+  }
+
+  .share .role {
+    font-family: var(--f-sans);
+    font-size: var(--s--1);
+    line-height: 1.45;
+    color: var(--ink-2);
+  }
+
+  .share .role b {
+    display: block;
+    font-weight: 600;
+    color: var(--ink);
+  }
+
+  .share[data-state='signing'] {
+    background: var(--accent-soft);
+    border-left-color: var(--accent);
+  }
+  .share[data-state='signing'] .key {
+    color: var(--accent);
+  }
+
+  .share[data-state='held'] {
+    opacity: 0.72;
+  }
+
+  .share[data-state='lost'] {
+    background: var(--crit-soft);
+    border-left-color: var(--crit);
+    opacity: 0.85;
+  }
+  .share[data-state='lost'] .key {
+    color: var(--crit);
+    text-decoration: line-through;
+  }
+
+  .share[data-state='new'] {
+    background: var(--ok-soft);
+    border-left-color: var(--ok);
+  }
+  .share[data-state='new'] .key {
+    color: var(--ok);
+  }
+
+  .readout {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: baseline;
+    gap: 0.5rem 1rem;
+    padding: 0.9rem 1.1rem;
+    background: var(--surface);
+    border: 1px solid var(--rule);
+    border-radius: 10px;
+  }
+
+  .readout .count {
+    font-family: var(--f-mono);
+    font-size: var(--s-2);
+    font-weight: 600;
+    font-variant-numeric: tabular-nums;
+    color: var(--accent);
+    flex: none;
+  }
+
+  .readout .verdict {
+    font-family: var(--f-sans);
+    font-size: var(--s--1);
+    font-weight: 500;
+    color: var(--ink-2);
+  }
+
+  .scenario-note {
+    font-size: var(--s-0);
+    color: var(--ink-2);
+  }
+
+  .scenario-note b {
+    color: var(--ink);
+    font-weight: 600;
+  }
+
+  /* ---- limits panel ---- */
+  .limits {
+    background: var(--surface);
+    border: 1px solid var(--rule);
+    border-top: 3px solid var(--crit);
+    border-radius: 4px 4px 10px 10px;
+    padding: clamp(1.25rem, 3vw, 1.9rem);
+    display: flex;
+    flex-direction: column;
+    gap: 1rem;
+  }
+
+  .limits h3 {
+    font-size: var(--s-2);
+  }
+
+  .limits ul {
+    margin: 0;
+    padding-left: 1.1rem;
+    max-width: var(--spine);
+    display: flex;
+    flex-direction: column;
+    gap: 0.4rem;
+    color: var(--ink-2);
+  }
+
+  /* ---- phases ---- */
+  .phases {
+    display: flex;
+    flex-direction: column;
+    gap: 0;
+    border: 1px solid var(--rule);
+    border-radius: 10px;
+    overflow: hidden;
+    background: var(--surface);
+  }
+
+  .phase {
+    display: grid;
+    grid-template-columns: 5.5rem 1fr auto;
+    gap: 0.5rem 1.25rem;
+    align-items: baseline;
+    padding: 1rem 1.15rem;
+    border-bottom: 1px solid var(--rule);
+  }
+
+  .phase:last-child {
+    border-bottom: 0;
+  }
+
+  .phase .num {
+    font-family: var(--f-mono);
+    font-size: var(--s--1);
+    font-weight: 500;
+    color: var(--ink-3);
+    letter-spacing: 0.04em;
+  }
+
+  .phase .body strong {
+    font-family: var(--f-sans);
+    font-size: var(--s-0);
+    font-weight: 600;
+    display: block;
+  }
+
+  .phase .body span {
+    font-size: var(--s--1);
+    color: var(--ink-2);
+  }
+
+  .phase[data-status='done'] {
+    background: var(--ok-soft);
+  }
+  .phase[data-status='done'] .num {
+    color: var(--ok);
+  }
+  .phase[data-status='active'] .num {
+    color: var(--accent);
+  }
+  .phase[data-status='active'] {
+    background: var(--accent-soft);
+  }
+
+  .status {
+    font-family: var(--f-mono);
+    font-size: var(--s--1);
+    font-weight: 500;
+    color: var(--ink-3);
+    white-space: nowrap;
+  }
+  .phase[data-status='done'] .status {
+    color: var(--ok);
+  }
+  .phase[data-status='active'] .status {
+    color: var(--accent);
+  }
+
+  /* ---- decisions ---- */
+  .decisions {
+    display: flex;
+    flex-direction: column;
+    gap: 1px;
+    background: var(--rule);
+    border: 1px solid var(--rule);
+    border-radius: 10px;
+    overflow: hidden;
+  }
+
+  .decision {
+    background: var(--surface);
+    padding: 1.1rem 1.15rem;
+    display: grid;
+    grid-template-columns: 5.5rem 1fr;
+    gap: 0.35rem 1.25rem;
+  }
+
+  .decision .id {
+    font-family: var(--f-mono);
+    font-size: var(--s--1);
+    font-weight: 500;
+    color: var(--ink-3);
+  }
+
+  .decision .what {
+    font-family: var(--f-sans);
+    font-weight: 600;
+    font-size: var(--s-0);
+  }
+
+  .decision .why {
+    grid-column: 2;
+    font-size: var(--s--1);
+    color: var(--ink-2);
+    max-width: var(--spine);
+  }
+
+  .decision[data-superseded='true'] .what {
+    color: var(--ink-3);
+    text-decoration: line-through;
+  }
+
+  /* ---- tree ---- */
+  .tree {
+    font-family: var(--f-mono);
+    font-size: var(--s--1);
+    line-height: 1.9;
+    background: var(--surface);
+    border: 1px solid var(--rule);
+    border-radius: 10px;
+    padding: 1.15rem;
+    overflow-x: auto;
+    margin: 0;
+    color: var(--ink-2);
+  }
+
+  .tree b {
+    color: var(--ink);
+    font-weight: 600;
+  }
+
+  /* ---- footer ---- */
+  footer .wrap {
+    padding-block: 2.5rem 3.5rem;
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.75rem 2rem;
+    align-items: baseline;
+    font-family: var(--f-mono);
+    font-size: var(--s--1);
+    color: var(--ink-3);
+  }
+
+  @media (max-width: 720px) {
+    .stage {
+      grid-template-columns: 1fr;
+    }
+    .phase,
+    .decision {
+      grid-template-columns: 1fr;
+    }
+    .phase .status {
+      grid-column: 1;
+    }
+    .decision .why {
+      grid-column: 1;
+    }
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    * {
+      transition: none !important;
+    }
+  }
+</style>
+
+<header class="masthead">
+  <div class="wrap">
+    <p class="eyebrow">DSRV Labs · 오픈소스</p>
+    <h1 class="title">mpc-ext<span>/</span>2-of-3</h1>
+    <p class="lede">
+      키를 세 조각으로 나눠 보관하는 크롬 확장입니다. 두 조각은 확장이, 한 조각은 서버가 들고
+      있습니다. 평소에는 확장만으로 서명하고, 조각 하나를 잃으면 서버 조각으로 되살립니다.
+    </p>
+    <div class="meta-row">
+      <span class="pill pill-warn"><span class="dot"></span>감사 전 · 실자산 사용 금지</span>
+      <span>DKLs23 · secp256k1</span>
+      <span>Rust + wasm · MV3</span>
+      <span>Apache-2.0</span>
+    </div>
+  </div>
+</header>
+
+<section id="mechanism">
+  <div class="wrap">
+    <div class="sec-head">
+      <p class="eyebrow">매커니즘</p>
+      <h2>셰어 세 개, 서명에 필요한 건 두 개</h2>
+      <p>
+        완전한 개인키는 어디에도 존재하지 않습니다. 세 개의 셰어 중 두 개가 모여야 서명이
+        만들어지고, 서명하는 순간에도 키가 조립되지는 않습니다. 아래에서 상황을 골라 어떤 셰어가
+        참여하는지 확인하세요.
+      </p>
+    </div>
+
+    <div class="scenarios" role="tablist" aria-label="시나리오">
+      <button class="tab" role="tab" id="tab-normal" aria-controls="stage" aria-selected="true">
+        평시 서명
+      </button>
+      <button class="tab" role="tab" id="tab-lost" aria-controls="stage" aria-selected="false">
+        셰어 하나 분실
+      </button>
+      <button class="tab" role="tab" id="tab-refresh" aria-controls="stage" aria-selected="false">
+        복구 후 리프레시
+      </button>
+      <button class="tab" role="tab" id="tab-export" aria-controls="stage" aria-selected="false">
+        키 추출
+      </button>
+      <button class="tab" role="tab" id="tab-device" aria-controls="stage" aria-selected="false">
+        기기 통째로 분실
+      </button>
+    </div>
+
+    <div class="stage" id="stage">
+      <div class="zone">
+        <div class="zone-head">
+          <strong>크롬 확장</strong>
+          <span class="mono">기기 · 암호화 저장소</span>
+        </div>
+        <div class="shares">
+          <div class="share" id="share-a" data-state="signing">
+            <div class="key">A</div>
+            <div class="role"><b>셰어 A</b><span id="role-a">서명 참여</span></div>
+          </div>
+          <div class="share" id="share-b" data-state="signing">
+            <div class="key">B</div>
+            <div class="role"><b>셰어 B</b><span id="role-b">서명 참여</span></div>
+          </div>
+        </div>
+      </div>
+
+      <div class="zone">
+        <div class="zone-head">
+          <strong>서버</strong>
+          <span class="mono">자체 호스팅 가능</span>
+        </div>
+        <div class="shares">
+          <div class="share" id="share-c" data-state="held">
+            <div class="key">C</div>
+            <div class="role"><b>셰어 C</b><span id="role-c">대기 — 평시 미사용</span></div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="readout">
+      <span class="count" id="readout-count">2 / 3</span>
+      <span class="verdict" id="readout-verdict">서명 가능 · 서버 통신 없음</span>
+    </div>
+
+    <p class="scenario-note" id="scenario-note">
+      <b>평시 서명은 확장 안에서 끝납니다.</b> 서버가 꺼져 있어도 서명할 수 있고, 서버는 사용자가
+      무엇에 서명했는지 알지 못합니다.
+    </p>
+  </div>
+</section>
+
+<section id="limits">
+  <div class="wrap">
+    <div class="limits">
+      <p class="eyebrow">정직한 고지</p>
+      <h3>이 설계가 주지 <em>않는</em> 것</h3>
+      <p>
+        셰어 A와 B는 같은 확장, 같은 저장소, 같은 비밀번호 아래 있습니다. 따라서
+        <b>잠금이 풀린 확장을 장악한 공격자는 두 셰어를 모두 얻습니다.</b> 그 시점의 도난 내성은
+        평범한 암호화 지갑과 다르지 않습니다.
+      </p>
+      <p>이 설계에서 MPC가 실제로 주는 것은 두 가지입니다.</p>
+      <ul>
+        <li>셰어 하나를 잃었을 때의 <b>복구 경로</b> — 주소를 바꾸지 않고 되살립니다.</li>
+        <li>디스크에 완전한 키가 존재하지 않는다는 점 — 메모리 스크래핑의 난이도만 올라갑니다.</li>
+      </ul>
+      <p>
+        "서버가 털려도 안전하다"는 참이지만, 뒤집으면 "확장이 털리면 서버가 있어도 소용없다"입니다.
+        평시 서명에서 서버를 뺐기 때문입니다. 셰어 B를 다른 신뢰 영역(패스키 · OS 키체인 · 별도
+        기기)으로 옮기는 것이 근본 해결책이고, 후속 과제로 등록되어 있습니다.
+      </p>
+    </div>
+  </div>
+</section>
+
+<section id="progress">
+  <div class="wrap">
+    <div class="sec-head">
+      <p class="eyebrow">진행 상황</p>
+      <h2>어디까지 왔나</h2>
+      <p>
+        단계는 실제 순서입니다. 앞 단계의 결과가 다음 단계의 설계를 바꾸기 때문에 병렬로 진행하지
+        않습니다.
+      </p>
+    </div>
+
+    <div class="phases">
+      <div class="phase" data-status="done">
+        <div class="num">PHASE 0</div>
+        <div class="body">
+          <strong>기반</strong>
+          <span
+            >cargo · pnpm 워크스페이스, 품질 게이트(fmt · clippy · tsc strict · test), 공급망
+            검사(cargo-deny · gitleaks), MPC 라이브러리 선정</span
+          >
+        </div>
+        <div class="status">완료</div>
+      </div>
+      <div class="phase" data-status="active">
+        <div class="num">PHASE 1</div>
+        <div class="body">
+          <strong>MPC 코어</strong>
+          <span
+            >DKG · 서명 · 리프레시 구현, 3파티 통합 테스트와 악성 메시지 테스트, 브라우저 실측(서명
+            1초 · DKG 10초 · 리프레시 30초 목표), 감사 범위 확정</span
+          >
+        </div>
+        <div class="status">진행 중</div>
+      </div>
+      <div class="phase" data-status="planned">
+        <div class="num">PHASE 2</div>
+        <div class="body">
+          <strong>확장 MVP</strong>
+          <span>암호화 저장소와 잠금/해제, 로컬 2셰어 DKG · 서명, 온보딩과 서명 승인 UI</span>
+        </div>
+        <div class="status">예정</div>
+      </div>
+      <div class="phase" data-status="planned">
+        <div class="num">PHASE 3</div>
+        <div class="body">
+          <strong>서버 + 2-of-3</strong>
+          <span>서버 DKG 참여, 3셰어 구성, 복구 흐름과 키 리프레시</span>
+        </div>
+        <div class="status">예정</div>
+      </div>
+      <div class="phase" data-status="planned">
+        <div class="num">PHASE 4</div>
+        <div class="body">
+          <strong>웹 통합</strong>
+          <span>EIP-1193 / EIP-6963 provider, origin 권한 관리, SDK와 예제 dApp</span>
+        </div>
+        <div class="status">예정</div>
+      </div>
+      <div class="phase" data-status="planned">
+        <div class="num">PHASE 5</div>
+        <div class="body">
+          <strong>추출</strong>
+          <span>셰어 export · import, 온보딩 편입, 완전 개인키 추출</span>
+        </div>
+        <div class="status">예정</div>
+      </div>
+      <div class="phase" data-status="planned">
+        <div class="num">PHASE 6</div>
+        <div class="body">
+          <strong>하드닝</strong>
+          <span>외부 보안 감사, 재현 가능 빌드와 릴리스 서명, 웹스토어 배포</span>
+        </div>
+        <div class="status">예정</div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section id="decisions">
+  <div class="wrap">
+    <div class="sec-head">
+      <p class="eyebrow">결정 기록</p>
+      <h2>되돌리기 어려운 선택들</h2>
+      <p>
+        스택 교체, 프로토콜 변경, 저장 포맷 변경은 ADR로 남깁니다. 폐기된 결정도 지우지 않고 사유와
+        함께 보존합니다.
+      </p>
+    </div>
+
+    <div class="decisions">
+      <div class="decision" data-superseded="true">
+        <div class="id">ADR-0001</div>
+        <div class="what">MPC 라이브러리 — silence-laboratories/dkls23</div>
+        <div class="why">
+          폐기. Apache-2.0으로 잘못 파악했으나 실제로는 비상업 · 철회가능 · 재배포불가 라이선스였고,
+          오픈소스 프로젝트가 쓸 수 없습니다.
+        </div>
+      </div>
+      <div class="decision">
+        <div class="id">ADR-0002</div>
+        <div class="what">스택 — Rust 코어를 확장과 서버가 공유</div>
+        <div class="why">
+          프로토콜을 두 언어로 중복 구현하면 두 구현이 갈라질 때 곧바로 보안 사고가 됩니다. 확장은
+          wasm, 서버는 네이티브로 같은 crate를 씁니다.
+        </div>
+      </div>
+      <div class="decision">
+        <div class="id">ADR-0003</div>
+        <div class="what">서버 저장소 — SQLite</div>
+        <div class="why">
+          파일 하나로 자체 호스팅이 쉽고, DKG처럼 여러 단계를 거치는 작업을 트랜잭션으로 묶어 반쪽
+          상태를 막습니다. 셰어는 앱에서 암호화한 뒤 저장합니다.
+        </div>
+      </div>
+      <div class="decision">
+        <div class="id">ADR-0004</div>
+        <div class="what">MPC 라이브러리 재선정 — 0xCarbon/DKLs23</div>
+        <div class="why">
+          키 리프레시를 지원하는 유일한 permissive 후보입니다. 리프레시가 없으면 복구가 주소 변경을
+          동반한 이전이 됩니다. 감사 이력이 없어 자체 감사 비용을 부담하고, 고정 커밋 vendoring과
+          트레이트 추상화로 교체 가능성을 유지합니다.
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section id="layout">
+  <div class="wrap">
+    <div class="sec-head">
+      <p class="eyebrow">저장소</p>
+      <h2>구조</h2>
+    </div>
+    <pre class="tree">
+<b>crates/mpc-core</b>     프로토콜 코어 — 확장과 서버가 공유하는 단일 진실 공급원
+<b>crates/mpc-wasm</b>     wasm 바인딩 — 타입 변환만, 프로토콜 로직 없음
+<b>crates/mpc-server</b>   셰어 C 보관 + DKG · 복구 참여 (axum · SQLite · Swagger UI)
+<b>packages/extension</b>  크롬 확장 (MV3 · React · WXT)
+<b>packages/sdk</b>        웹페이지용 provider SDK (EIP-1193 / EIP-6963)
+<b>docs/</b>               설계 문서와 ADR
+<b>AGENTS.md</b>           개발 대전제 (CLAUDE.md는 심볼릭 링크)</pre>
+    <p>
+      <code>make check</code>가 커밋 게이트입니다 — 포매팅, clippy(경고를 에러로), TypeScript
+      strict, 테스트를 한 번에 돌립니다. copyleft 의존성은 <code>cargo-deny</code>가 기계적으로
+      막습니다.
+    </p>
+  </div>
+</section>
+
+<footer>
+  <div class="wrap">
+    <span>mpc-ext · Apache-2.0</span>
+    <span>취약점 신고는 GitHub Security Advisory로</span>
+    <span>감사 전까지 실자산에 사용하지 마세요</span>
+  </div>
+</footer>
+
+<script>
+  const SCENARIOS = {
+    normal: {
+      a: ['signing', '서명 참여'],
+      b: ['signing', '서명 참여'],
+      c: ['held', '대기 — 평시 미사용'],
+      count: '2 / 3',
+      verdict: '서명 가능 · 서버 통신 없음',
+      note: '<b>평시 서명은 확장 안에서 끝납니다.</b> 서버가 꺼져 있어도 서명할 수 있고, 서버는 사용자가 무엇에 서명했는지 알지 못합니다.',
+    },
+    lost: {
+      a: ['lost', '분실 — 사용 불가'],
+      b: ['signing', '서명 참여'],
+      c: ['signing', '복구 모드로 참여'],
+      count: '2 / 3',
+      verdict: '서명 가능 · 서버가 복구 모드로 참여',
+      note: '<b>남은 셰어와 서버 셰어로 계속 서명할 수 있습니다.</b> 서버는 사용자 인증과 지연 기간을 거친 뒤에만 참여하고, 복구가 시작되면 등록된 채널로 알림이 갑니다.',
+    },
+    refresh: {
+      a: ['new', '새 셰어 — 새 기기'],
+      b: ['new', '새 셰어 — 재생성'],
+      c: ['new', '새 셰어 — 재생성'],
+      count: '3 / 3',
+      verdict: '2-of-3 복원 · 공개키(주소) 유지',
+      note: '<b>복구 직후 키 리프레시를 실행합니다.</b> 공개키는 그대로 두고 셰어만 새로 만들기 때문에 주소가 바뀌지 않고, 분실한 옛 셰어는 그 순간 무효가 됩니다.',
+    },
+    export: {
+      a: ['signing', '추출에 참여'],
+      b: ['signing', '추출에 참여'],
+      c: ['held', '관여하지 않음'],
+      count: '2 / 3',
+      verdict: '완전한 개인키 복원 · 오프라인',
+      note: '<b>사용자는 언제든 키를 꺼낼 수 있습니다.</b> 셰어 두 개를 합쳐 표준 포맷의 개인키를 복원하며, 서버 없이 완전히 오프라인으로 동작합니다. 다만 이 순간 MPC의 이점은 사라지므로 확장이 강하게 경고합니다.',
+    },
+    device: {
+      a: ['lost', '분실 — 기기와 함께'],
+      b: ['lost', '분실 — 기기와 함께'],
+      c: ['held', '홀로 남음 — 서명 불가'],
+      count: '1 / 3',
+      verdict: '서명 불가 · 사전 export가 없으면 복구 불가',
+      note: '<b>서버 셰어 하나로는 아무것도 할 수 없습니다.</b> 이 경우의 유일한 대비책은 미리 내보내 둔 셰어 export이고, 잃은 뒤에는 만들 수 없습니다. 그래서 온보딩에서 export를 유도하고, 하지 않은 상태를 계속 경고합니다.',
+    },
+  };
+
+  const els = {
+    a: document.getElementById('share-a'),
+    b: document.getElementById('share-b'),
+    c: document.getElementById('share-c'),
+    roleA: document.getElementById('role-a'),
+    roleB: document.getElementById('role-b'),
+    roleC: document.getElementById('role-c'),
+    count: document.getElementById('readout-count'),
+    verdict: document.getElementById('readout-verdict'),
+    note: document.getElementById('scenario-note'),
+  };
+
+  const tabs = [...document.querySelectorAll('.tab')];
+
+  function apply(key) {
+    const s = SCENARIOS[key];
+    if (!s) return;
+    els.a.dataset.state = s.a[0];
+    els.roleA.textContent = s.a[1];
+    els.b.dataset.state = s.b[0];
+    els.roleB.textContent = s.b[1];
+    els.c.dataset.state = s.c[0];
+    els.roleC.textContent = s.c[1];
+    els.count.textContent = s.count;
+    els.verdict.textContent = s.verdict;
+    els.note.innerHTML = s.note;
+    tabs.forEach((t) => t.setAttribute('aria-selected', String(t.id === 'tab-' + key)));
+  }
+
+  tabs.forEach((tab) => {
+    tab.addEventListener('click', () => apply(tab.id.replace('tab-', '')));
+    tab.addEventListener('keydown', (e) => {
+      const i = tabs.indexOf(tab);
+      const next =
+        e.key === 'ArrowRight'
+          ? tabs[(i + 1) % tabs.length]
+          : e.key === 'ArrowLeft'
+            ? tabs[(i - 1 + tabs.length) % tabs.length]
+            : null;
+      if (next) {
+        e.preventDefault();
+        next.focus();
+        apply(next.id.replace('tab-', ''));
+      }
+    });
+  });
+</script>
