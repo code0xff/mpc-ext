@@ -41,7 +41,8 @@ Before an audit can start:
 - [ ] Vendor the MPC crate into the source tree so the audited code is frozen at a commit
 - [ ] Establish reproducible builds (`development.md`)
 - [ ] Bring the threat model up to date (`security.md`)
-- [ ] Finish the server authentication design (`server.md`, currently undecided)
+- [x] Finish the server authentication design ([adr/0006](adr/0006-server-authentication.md))
+- [ ] Implement it — the design alone is not enough to audit against
 
 ## Undecided — needs a decision
 

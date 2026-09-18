@@ -69,14 +69,27 @@ Rules:
 
 ## Authentication
 
-**Not designed yet.** Until then a development-only shared token stands in, and the real scheme
-is designed separately (`roadmap.md`). The server logs a warning on start-up.
+**Designed, not yet implemented** ([adr/0006](adr/0006-server-authentication.md)). Until it lands
+the server runs with a development-only token and warns on start-up.
 
-Regardless of the eventual scheme, these are settled:
+Two mechanisms with two jobs:
 
-- Recovery requests require authentication plus a cooling-off period.
+- **A device key** identifies the wallet. The extension signs every request with a
+  non-extractable key registered at setup, which gives the server rate limits, anomaly detection
+  and an audit trail. It is **not** a second factor: it is stolen together with the extension.
+- **A passkey (WebAuthn)** authorises every signature and every recovery. It lives in the
+  platform authenticator rather than the extension, so stealing the extension's storage does not
+  obtain it — that is what makes the server a real second factor.
+
+Losing the passkey is not a lock-out, because share A plus the recovery file sign without the
+server at all (`recovery.md`, scenario 0). The passkey guards the server's participation, never
+the user's funds.
+
+Settled regardless:
+
+- Recovery requires the passkey **and** a cooling-off period. Possession is not intent.
 - Starting recovery notifies the registered channel and the user can cancel.
-- **We do not deploy to production before the authentication design is finished.**
+- **We do not deploy to production before this is implemented.**
 
 ## Availability
 

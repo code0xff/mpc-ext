@@ -42,7 +42,10 @@
 - [x] Recovery flow (B+C) — import the recovery file and sign again, verified in the smoke test
 - [ ] Distributed reshare, so a lost share can actually be invalidated (`recovery.md`)
 - [x] Make the server URL configurable, for self-hosting
-- [ ] Settle the server authentication design (cooling-off, notification, cancellation)
+- [x] Settle the server authentication design ([adr/0006](adr/0006-server-authentication.md))
+- [ ] Spike: can an extension page act as a WebAuthn relying party? (ADR-0006 open question)
+- [ ] Implement the device key (request signing, rate limits, audit)
+- [ ] Implement passkey registration and assertion, required for signing and recovery
 - [x] Signing approval UI (digest-level; the origin-aware screen arrives with the provider)
 
 ## Phase 4 — web integration
@@ -75,5 +78,4 @@
 - Curves beyond secp256k1, and EdDSA
 - Hardware wallets as share holders
 - Automatic signing approval policies (off by default)
-- Server authentication scheme (a development token stands in until Phase 3)
 - SQLite → Postgres (when multiple server instances become necessary)
