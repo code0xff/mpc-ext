@@ -164,3 +164,24 @@ button.quiet {
 button:disabled {
   cursor: not-allowed;
 }
+
+.origins {
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.origins li {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 0.5rem;
+}
+
+.origins button {
+  width: auto;
+  flex: none;
+}

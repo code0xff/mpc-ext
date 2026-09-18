@@ -49,7 +49,13 @@ export type Request =
       recoveryShareHex: string;
     }
   | { type: 'readSettings' }
-  | { type: 'setServerUrl'; serverUrl: string };
+  | { type: 'setServerUrl'; serverUrl: string }
+  /** Relayed from a page by the content script. The origin comes from the sender, not the page. */
+  | { type: 'pageRequest'; method: string; params?: unknown[] }
+  | { type: 'pendingApprovals' }
+  | { type: 'decideApproval'; id: string; approved: boolean }
+  | { type: 'connectedOrigins' }
+  | { type: 'disconnectOrigin'; origin: string };
 
 export type Response<T> = { ok: true; value: T } | { ok: false; error: string };
 

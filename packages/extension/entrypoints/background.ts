@@ -5,12 +5,15 @@
  * worker's memory, so the wallet locks itself whenever the worker is terminated
  * (`docs/architecture.md`).
  */
+import * as approvals from '../src/approvals';
 import type { CreatedKey, Request, Response, Signed, Status, WasmHealth } from '../src/messages';
+import { handlePageRequest } from '../src/pageApi';
+import * as permissions from '../src/permissions';
 import { PARTY, runDkg, signWithRecoveryFile, signWithServer } from '../src/protocolRunner';
 import { health as serverHealth, ServerUnreachable } from '../src/serverClient';
 import * as settings from '../src/settings';
 import * as vault from '../src/vault';
-import { loadWasm, threshold_config } from '../src/wasm';
+import { ethereum_address, loadWasm, threshold_config } from '../src/wasm';
 
 /** The decrypted share A. Disappears with the worker, and is never persisted. */
 let unlockedShare: Uint8Array | undefined;
@@ -149,6 +152,43 @@ async function unlock(password: string): Promise<Status> {
 function lock(): void {
   wipe(unlockedShare);
   unlockedShare = undefined;
+  // Anything still waiting for the user must fail closed rather than resume after an unlock.
+  approvals.rejectAll();
+}
+
+/** The wallet's Ethereum address, or undefined while locked or before setup. */
+async function address(): Promise<string | undefined> {
+  if (!unlockedShare) return undefined;
+  const publicKeyHex = await vault.publicKeyHex();
+  if (!publicKeyHex) return undefined;
+  await loadWasm();
+  return ethereum_address(fromHex(publicKeyHex));
+}
+
+/**
+ * Opens the approval window.
+ *
+ * A popup cannot be relied on — it may be closed — so requests that need consent get their own
+ * window. Closing it without answering rejects everything pending (`docs/web-api.md`).
+ */
+async function openApprovalWindow(): Promise<void> {
+  const created = await chrome.windows.create({
+    url: chrome.runtime.getURL('approve.html'),
+    type: 'popup',
+    width: 400,
+    height: 620,
+  });
+
+  if (created.id === undefined) return;
+  const windowId = created.id;
+
+  const onClosed = (closed: number) => {
+    if (closed !== windowId) return;
+    chrome.windows.onRemoved.removeListener(onClosed);
+    // A closed window is a refusal, never a silent approval.
+    approvals.rejectAll();
+  };
+  chrome.windows.onRemoved.addListener(onClosed);
 }
 
 /**
@@ -240,6 +280,17 @@ async function handle(request: Request): Promise<unknown> {
       return settings.read();
     case 'setServerUrl':
       return settings.setServerUrl(request.serverUrl);
+    case 'pendingApprovals':
+      return approvals.pending();
+    case 'decideApproval':
+      return approvals.decide(request.id, request.approved);
+    case 'connectedOrigins':
+      return permissions.connected();
+    case 'disconnectOrigin':
+      return permissions.disconnect(request.origin);
+    case 'pageRequest':
+      // Handled separately: it needs the sender's origin, which `handle` does not see.
+      throw new Error('Page requests are dispatched with their sender.');
     default: {
       const exhaustive: never = request;
       throw new Error(`Unknown request: ${JSON.stringify(exhaustive)}`);
@@ -249,8 +300,23 @@ async function handle(request: Request): Promise<unknown> {
 
 export default defineBackground(() => {
   chrome.runtime.onMessage.addListener(
-    (request: Request, _sender, sendResponse: (response: Response<unknown>) => void) => {
-      handle(request)
+    (request: Request, sender, sendResponse: (response: Response<unknown>) => void) => {
+      // Page requests are answered against the origin the browser reports for the sender. A page
+      // cannot influence this value, which is the point (`docs/web-api.md`).
+      const work =
+        request.type === 'pageRequest'
+          ? (async () => {
+              const origin = sender.origin ?? (sender.url ? new URL(sender.url).origin : undefined);
+              if (!origin) throw new Error('This request has no verifiable origin.');
+              return handlePageRequest(origin, request.method, request.params, {
+                address,
+                sign: async (digestHex) => (await sign(digestHex)).signatureHex,
+                requestApproval: openApprovalWindow,
+              });
+            })()
+          : handle(request);
+
+      work
         .then((value) => sendResponse({ ok: true, value }))
         // Pass a string only, so no secret can ride along in an error object.
         .catch((error: unknown) => {

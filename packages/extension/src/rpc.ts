@@ -16,11 +16,7 @@ export const PAGE_MESSAGE = 'mpc-ext:page-request';
 export const PAGE_RESPONSE = 'mpc-ext:page-response';
 
 /** The RPC methods we answer. Anything else is refused. */
-export const SUPPORTED_METHODS = [
-  'eth_requestAccounts',
-  'eth_accounts',
-  'personal_sign',
-] as const;
+export const SUPPORTED_METHODS = ['eth_requestAccounts', 'eth_accounts', 'personal_sign'] as const;
 
 export type SupportedMethod = (typeof SUPPORTED_METHODS)[number];
 

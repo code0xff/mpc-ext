@@ -195,3 +195,41 @@ fn reshare_preserves_the_public_key_and_invalidates_old_shares() {
         "an old share must stop working once a fresh set exists"
     );
 }
+
+#[test]
+fn derives_a_checksummed_ethereum_address() {
+    let (shares, public_key) = dkg(&session_id(19)).expect("DKG should succeed");
+
+    let address = mpc_core::ethereum_address(&public_key).expect("derivation should succeed");
+
+    assert!(address.starts_with("0x"), "an address starts with 0x");
+    assert_eq!(
+        address.len(),
+        42,
+        "an address is 20 bytes as hex plus the prefix"
+    );
+    assert!(
+        address[2..].chars().all(|c| c.is_ascii_hexdigit()),
+        "the body is hex"
+    );
+    // ERC-55 mixes case as a checksum, so a well-formed address is not all one case.
+    assert!(
+        address[2..].chars().any(|c| c.is_ascii_uppercase())
+            || address[2..].chars().all(|c| c.is_ascii_digit()),
+        "ERC-55 should introduce mixed case"
+    );
+
+    // The same key must always yield the same address.
+    let exported = export_private_key(&[share_of(&shares, 0), share_of(&shares, 1)])
+        .expect("the export should succeed");
+    let signing_key =
+        k256::ecdsa::SigningKey::from_slice(&exported.0).expect("it should be a valid private key");
+    let derived = signing_key.verifying_key().to_sec1_bytes();
+    let mut same = [0u8; 33];
+    same.copy_from_slice(derived.as_ref());
+    assert_eq!(
+        mpc_core::ethereum_address(&mpc_core::PublicKey(same)).expect("derivation"),
+        address,
+        "the address must be stable for a given key"
+    );
+}

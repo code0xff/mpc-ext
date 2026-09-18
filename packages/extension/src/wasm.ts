@@ -7,6 +7,8 @@
  */
 import init, {
   DkgSession,
+  ethereum_address,
+  keccak256,
   SignSession,
   threshold_config,
   verify as wasmVerify,
@@ -22,4 +24,4 @@ export function loadWasm(): Promise<void> {
   return ready;
 }
 
-export { DkgSession, SignSession, threshold_config, wasmVerify };
+export { DkgSession, ethereum_address, keccak256, SignSession, threshold_config, wasmVerify };

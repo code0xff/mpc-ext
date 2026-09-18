@@ -1,0 +1,125 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>mpc-ext example dApp</title>
+    <style>
+      :root {
+        color-scheme: light dark;
+        --ground: #f5f6fb;
+        --surface: #fff;
+        --ink: #13172a;
+        --ink-2: #474d66;
+        --rule: #dcdfed;
+        --accent: #3b4bd0;
+        --crit: #a81f18;
+      }
+      @media (prefers-color-scheme: dark) {
+        :root {
+          --ground: #0b0e18;
+          --surface: #141827;
+          --ink: #e9ebf6;
+          --ink-2: #a8adc4;
+          --rule: #262b3e;
+          --accent: #8d97f2;
+          --crit: #f0837b;
+        }
+      }
+      body {
+        margin: 0;
+        padding: 2rem 1.25rem;
+        background: var(--ground);
+        color: var(--ink);
+        font:
+          15px/1.6 system-ui,
+          sans-serif;
+      }
+      main {
+        max-width: 36rem;
+        margin-inline: auto;
+        display: flex;
+        flex-direction: column;
+        gap: 1.25rem;
+      }
+      section {
+        background: var(--surface);
+        border: 1px solid var(--rule);
+        border-radius: 10px;
+        padding: 1.1rem;
+      }
+      h1 {
+        font-size: 1.3rem;
+        margin: 0;
+      }
+      h2 {
+        font-size: 0.8rem;
+        letter-spacing: 0.07em;
+        text-transform: uppercase;
+        color: var(--ink-2);
+        margin: 0 0 0.6rem;
+      }
+      button {
+        padding: 0.5rem 1rem;
+        border: 0;
+        border-radius: 6px;
+        background: var(--accent);
+        color: var(--ground);
+        font: inherit;
+        font-weight: 600;
+        cursor: pointer;
+      }
+      input {
+        width: 100%;
+        margin-bottom: 0.6rem;
+        padding: 0.45rem 0.6rem;
+        border: 1px solid var(--rule);
+        border-radius: 6px;
+        background: var(--ground);
+        color: var(--ink);
+        font: inherit;
+      }
+      pre {
+        margin: 0.6rem 0 0;
+        padding: 0.6rem;
+        background: var(--ground);
+        border-radius: 6px;
+        overflow-x: auto;
+        font-size: 0.8rem;
+      }
+      .error {
+        color: var(--crit);
+      }
+      p {
+        margin: 0 0 0.6rem;
+      }
+    </style>
+  </head>
+  <body>
+    <main>
+      <h1>mpc-ext example dApp</h1>
+      <p>
+        Discovers the wallet over EIP-6963 and talks to it over EIP-1193 — no mpc-ext-specific API
+        involved.
+      </p>
+
+      <section>
+        <h2>Wallet</h2>
+        <p id="wallet">Looking for a wallet…</p>
+        <button id="connect" type="button" hidden>Connect</button>
+        <pre id="account" hidden></pre>
+      </section>
+
+      <section>
+        <h2>Sign a message</h2>
+        <input id="message" value="hello from the example dApp" />
+        <button id="sign" type="button" disabled>Sign</button>
+        <pre id="signature" hidden></pre>
+      </section>
+
+      <p id="error" class="error" hidden></p>
+    </main>
+
+    <script type="module" src="./main.js"></script>
+  </body>
+</html>

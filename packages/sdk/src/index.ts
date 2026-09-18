@@ -33,6 +33,9 @@ export interface ProviderDetail {
 /** This extension's EIP-6963 identifier. */
 export const MPC_EXT_RDNS = 'labs.dsrv.mpc-ext';
 
+/** EIP-1193 error codes a caller is likely to branch on. */
+export const USER_REJECTED = 4001;
+
 /**
  * Collects the wallets that announce themselves over EIP-6963.
  *
@@ -68,4 +71,38 @@ export function discoverProviders(timeoutMs = 300): Promise<ProviderDetail[]> {
 export async function findMpcExt(timeoutMs?: number): Promise<ProviderDetail | undefined> {
   const providers = await discoverProviders(timeoutMs);
   return providers.find((p) => p.info.rdns === MPC_EXT_RDNS);
+}
+
+/**
+ * Asks the user to connect, returning the accounts they shared.
+ *
+ * Throws with `code === USER_REJECTED` when the user declines, which is the normal outcome to
+ * handle rather than an exceptional one.
+ */
+export async function requestAccounts(provider: Eip1193Provider): Promise<string[]> {
+  return (await provider.request({ method: 'eth_requestAccounts' })) as string[];
+}
+
+/** The accounts already shared with this page, without prompting. */
+export async function accounts(provider: Eip1193Provider): Promise<string[]> {
+  return (await provider.request({ method: 'eth_accounts' })) as string[];
+}
+
+/**
+ * Signs a UTF-8 message with `personal_sign` (EIP-191).
+ *
+ * The wallet prefixes the message before hashing, so this cannot be used to get a transaction
+ * signed.
+ */
+export async function personalSign(
+  provider: Eip1193Provider,
+  message: string,
+  address: string,
+): Promise<string> {
+  const bytes = new TextEncoder().encode(message);
+  const hex = [...bytes].map((b) => b.toString(16).padStart(2, '0')).join('');
+  return (await provider.request({
+    method: 'personal_sign',
+    params: [`0x${hex}`, address],
+  })) as string;
 }

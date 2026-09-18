@@ -3,6 +3,7 @@ import { useCallback, useEffect, useState } from 'react';
 import type { CreatedKey, Status, WasmHealth } from '../../src/messages';
 import { send } from './api';
 import { downloadRecoveryFile } from './recoveryFile';
+import { OriginsPanel } from './OriginsPanel';
 import { RecoverPanel } from './RecoverPanel';
 import { ServerPanel } from './ServerPanel';
 import { SignPanel } from './SignPanel';
@@ -174,6 +175,7 @@ export function App() {
       )}
 
       {status?.kind === 'unlocked' && <SignPanel serverUp={serverUp} />}
+      {status?.kind === 'unlocked' && <OriginsPanel />}
 
       <ServerPanel onChanged={checkServer} />
 

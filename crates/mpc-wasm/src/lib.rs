@@ -159,6 +159,22 @@ mod tests {
     }
 }
 
+/// Derives the ERC-55 checksummed Ethereum address for a SEC1 compressed public key.
+#[wasm_bindgen]
+pub fn ethereum_address(public_key: &[u8]) -> Result<String, JsValue> {
+    let key: [u8; 33] = public_key
+        .try_into()
+        .map_err(|_| JsValue::from_str("public key must be 33 bytes"))?;
+    mpc_core::ethereum_address(&mpc_core::PublicKey(key)).map_err(to_js)
+}
+
+/// Keccak-256, which `personal_sign` needs and WebCrypto does not provide.
+#[wasm_bindgen]
+pub fn keccak256(data: &[u8]) -> Vec<u8> {
+    use sha3::{Digest, Keccak256};
+    Keccak256::digest(data).to_vec()
+}
+
 /// An envelope shaped for the wire.
 ///
 /// Payloads reach 100 KB, and encoding those as a JSON array of numbers costs several times

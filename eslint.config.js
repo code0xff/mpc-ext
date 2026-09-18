@@ -26,6 +26,19 @@ export default tseslint.config(
     },
   },
   {
+    // Plain browser scripts that ship as-is, with no bundler and no module resolution.
+    files: ['examples/**/*.js'],
+    languageOptions: {
+      globals: {
+        document: 'readonly',
+        window: 'readonly',
+        Event: 'readonly',
+        setTimeout: 'readonly',
+        TextEncoder: 'readonly',
+      },
+    },
+  },
+  {
     // Development-only Node scripts, where console output is the deliverable.
     files: ['**/scripts/**/*.mjs', '*.config.{js,ts,mjs}'],
     languageOptions: {

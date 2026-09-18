@@ -327,6 +327,18 @@ struct RefreshState {
     zero_keep: BTreeMap<PartyIndex, dkls23_secp256k1::protocols::dkg::KeepInitZeroSharePhase2to3>,
 }
 
+/// Derives the ERC-55 checksummed Ethereum address for a public key.
+///
+/// Address derivation is chain-specific and deliberately lives at the edge of this crate: the
+/// protocol core does not care about addresses, but the extension has to show one.
+pub fn ethereum_address(public_key: &PublicKey) -> Result<String> {
+    use elliptic_curve::sec1::FromSec1Point;
+
+    let point = k256::AffinePoint::from_sec1_bytes(&public_key.0)
+        .map_err(|e| Error::Backend(format!("invalid public key: {e}")))?;
+    Ok(dkls23_secp256k1::compute_eth_address(&point))
+}
+
 /// Checks a signature against a public key.
 ///
 /// Used by tests and by callers double-checking their own output. Touches no secrets.
