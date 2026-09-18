@@ -8,20 +8,23 @@ import type { CreatedKey } from '../../src/messages';
 
 /** The recovery file container. `publicKey` is used to check integrity on import. */
 export interface RecoveryFile {
-  formatVersion: 1;
+  formatVersion: 2;
   kind: 'mpc-ext-recovery';
   createdAt: string;
   publicKey: string;
+  /** Identifies the wallet to the server, so a fresh install can find share C. Not a secret. */
+  walletId: string;
   share: string;
   note: string;
 }
 
 export function buildRecoveryFile(created: CreatedKey): RecoveryFile {
   return {
-    formatVersion: 1,
+    formatVersion: 2,
     kind: 'mpc-ext-recovery',
     createdAt: new Date().toISOString(),
     publicKey: created.publicKeyHex,
+    walletId: created.walletId,
     share: created.recoveryShareHex,
     note: 'mpc-ext recovery file (share B). Store it somewhere other than the extension. This file alone cannot sign.',
   };

@@ -112,8 +112,10 @@ inside a real MV3 service worker with a real server on localhost.
 | DKG (3 parties)     | 4,920 ms                | **9,084 ms**       | 10 s   | pass   |
 | Signing (2 parties) | 16 ms                   | **41 ms**          | 1 s    | pass   |
 
-Splitting costs roughly 2× on DKG — HTTP round trips plus serializing ~114 KB shares across the
-wasm boundary and the wire several times. Signing stays comfortable.
+Splitting the work adds HTTP round trips and several passes of serializing ~114 KB shares across
+the wasm boundary and the wire. The DKG figure varies a lot between runs — machine load dominates
+— so the range above is what we have observed rather than a single number. Signing stays
+comfortable either way.
 
 One lesson worth keeping: the first split measurement was **12,729 ms for DKG, over budget**. The
 cause was encoding envelope payloads as JSON arrays of numbers when crossing from wasm to JS.

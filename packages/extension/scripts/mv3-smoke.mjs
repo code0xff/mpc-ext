@@ -212,11 +212,40 @@ try {
     if (refused.ok) throw new Error('a locked wallet produced a signature');
     await expect({ type: 'unlock', password: 'correct horse' }, 'unlock');
 
+    // Device-loss recovery: wipe this install, then restore from the recovery file and sign
+    // again with the recovery share plus the server (docs/recovery.md, scenario 1).
+    await chrome.storage.local.clear();
+    const wiped = await expect({ type: 'status' }, 'status after wipe');
+    if (wiped.kind !== 'uninitialized') throw new Error(`expected a clean install: ${wiped.kind}`);
+
+    const restored = await expect(
+      {
+        type: 'recoverFromFile',
+        password: 'a whole new horse',
+        walletId: created.walletId,
+        publicKeyHex: created.publicKeyHex,
+        recoveryShareHex: created.recoveryShareHex,
+      },
+      'recovery',
+    );
+    if (restored.kind !== 'unlocked') throw new Error(`expected unlocked: ${restored.kind}`);
+    if (!restored.recovered) throw new Error('a restored wallet must be marked as recovered');
+    if (restored.publicKeyHex !== created.publicKeyHex) {
+      throw new Error('recovery changed the address');
+    }
+
+    const recoveredStarted = performance.now();
+    const afterRecovery = await expect({ type: 'sign', digestHex }, 'signing after recovery');
+    const recoveredSignMs = Math.round(performance.now() - recoveredStarted);
+    if (afterRecovery.via !== 'server') throw new Error('expected the server path');
+    if (afterRecovery.signatureHex.length !== 130) throw new Error('a signature is 65 bytes');
+
     return {
       config: health.config,
       loadMs: health.loadMs,
       dkgMs,
       signMs,
+      recoveredSignMs,
       publicKey: created.publicKeyHex,
       recoveryShareBytes: created.recoveryShareHex.length / 2,
     };
@@ -227,14 +256,15 @@ try {
   console.log(`wasm load        ${result.loadMs} ms`);
   console.log(`DKG (3 parties)  ${result.dkgMs} ms   (extension + server)`);
   console.log(`signing          ${result.signMs} ms   (extension + server)`);
+  console.log(`signing restored ${result.recoveredSignMs} ms   (recovery file + server)`);
   console.log(`public key       ${result.publicKey.slice(0, 24)}…`);
   console.log(`recovery share   ${result.recoveryShareBytes} bytes`);
 
   if (result.config !== '2-of-3') throw new Error(`unexpected threshold: ${result.config}`);
   if (result.publicKey.length !== 66) throw new Error('the public key is not 33 bytes');
   console.log(
-    '\nPASS: DKG with the server, atomic onboarding, everyday signing, the offline fallback\n' +
-      '      and lock/unlock all work inside the MV3 service worker.',
+    '\nPASS: DKG with the server, atomic onboarding, everyday signing, the offline fallback,\n' +
+      '      lock/unlock and device-loss recovery all work inside the MV3 service worker.',
   );
 } catch (error) {
   failed = true;

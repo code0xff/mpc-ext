@@ -39,8 +39,9 @@
 - [x] `mpc-server` joins DKG (SQLite + OpenAPI/Swagger UI, spec pinned in `docs/openapi.json`)
 - [x] **Everyday signing transport** — extension (A) ↔ server (C) round exchange, verified end to end over HTTP
 - [x] The A+B emergency signing path for server outages (offline, no server involved)
-- [ ] Recovery flow (B+C) and reshare
-- [ ] Make the server URL configurable, for self-hosting
+- [x] Recovery flow (B+C) — import the recovery file and sign again, verified in the smoke test
+- [ ] Distributed reshare, so a lost share can actually be invalidated (`recovery.md`)
+- [x] Make the server URL configurable, for self-hosting
 - [ ] Settle the server authentication design (cooling-off, notification, cancellation)
 - [x] Signing approval UI (digest-level; the origin-aware screen arrives with the provider)
 

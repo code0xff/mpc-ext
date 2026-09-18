@@ -106,22 +106,23 @@ export async function signWithServer(
   baseUrl: string,
   walletId: string,
   share: Uint8Array,
+  localParty: number,
   signId: Uint8Array,
   digest: Uint8Array,
 ): Promise<Uint8Array> {
   const signHex = hex(signId);
-  const session = new SignSession(share, PARTY.extension, PARTY.server, signId, digest);
+  const session = new SignSession(share, localParty, PARTY.server, signId, digest);
 
   let inFlight: WireEnvelope[] = [
     ...parse(session.outgoing),
-    ...(await server.startSign(baseUrl, walletId, signHex, hex(digest), PARTY.extension)),
+    ...(await server.startSign(baseUrl, walletId, signHex, hex(digest), localParty)),
   ];
 
   for (let round = 0; round < MAX_ROUNDS; round += 1) {
     const next: WireEnvelope[] = [];
 
     if (!session.finished) {
-      session.advance(JSON.stringify(inboxFor(PARTY.extension, inFlight)));
+      session.advance(JSON.stringify(inboxFor(localParty, inFlight)));
       next.push(...parse(session.outgoing));
     }
 

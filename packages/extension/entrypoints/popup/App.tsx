@@ -3,6 +3,8 @@ import { useCallback, useEffect, useState } from 'react';
 import type { CreatedKey, Status, WasmHealth } from '../../src/messages';
 import { send } from './api';
 import { downloadRecoveryFile } from './recoveryFile';
+import { RecoverPanel } from './RecoverPanel';
+import { ServerPanel } from './ServerPanel';
 import { SignPanel } from './SignPanel';
 
 export function App() {
@@ -16,6 +18,12 @@ export function App() {
 
   const refresh = useCallback(async () => {
     setStatus(await send<Status>({ type: 'status' }));
+  }, []);
+
+  const checkServer = useCallback(() => {
+    void send<boolean>({ type: 'serverHealth' })
+      .then(setServerUp)
+      .catch(() => setServerUp(false));
   }, []);
 
   useEffect(() => {
@@ -62,6 +70,8 @@ export function App() {
           </dd>
         </dl>
       </section>
+
+      {status?.kind === 'uninitialized' && <RecoverPanel onRecovered={setStatus} />}
 
       {status?.kind === 'uninitialized' && (
         <CreateKey
@@ -142,6 +152,12 @@ export function App() {
         <section>
           <h2>Wallet</h2>
           <p className="mono">{status.publicKeyHex}</p>
+          {status.recovered && (
+            <p className="warn">
+              Restored from a recovery file. The share on the lost device is still valid, so move
+              your funds to a new wallet when you can.
+            </p>
+          )}
           <button
             type="button"
             id="lock"
@@ -158,6 +174,8 @@ export function App() {
       )}
 
       {status?.kind === 'unlocked' && <SignPanel serverUp={serverUp} />}
+
+      <ServerPanel onChanged={checkServer} />
 
       {error && (
         <p className="error" id="error">
@@ -251,6 +269,8 @@ function describe(status: Status): string {
     case 'locked':
       return 'Locked';
     case 'unlocked':
-      return `Unlocked — ${status.publicKeyHex.slice(0, 16)}…`;
+      return status.recovered
+        ? `Unlocked (restored) — ${status.publicKeyHex.slice(0, 16)}…`
+        : `Unlocked — ${status.publicKeyHex.slice(0, 16)}…`;
   }
 }

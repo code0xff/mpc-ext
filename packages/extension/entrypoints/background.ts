@@ -6,8 +6,9 @@
  * (`docs/architecture.md`).
  */
 import type { CreatedKey, Request, Response, Signed, Status, WasmHealth } from '../src/messages';
-import { runDkg, signWithRecoveryFile, signWithServer } from '../src/protocolRunner';
-import { DEFAULT_SERVER, health as serverHealth, ServerUnreachable } from '../src/serverClient';
+import { PARTY, runDkg, signWithRecoveryFile, signWithServer } from '../src/protocolRunner';
+import { health as serverHealth, ServerUnreachable } from '../src/serverClient';
+import * as settings from '../src/settings';
 import * as vault from '../src/vault';
 import { loadWasm, threshold_config } from '../src/wasm';
 
@@ -51,7 +52,11 @@ async function status(): Promise<Status> {
   }
   const publicKeyHex = await vault.publicKeyHex();
   if (!publicKeyHex) return { kind: 'uninitialized' };
-  return unlockedShare ? { kind: 'unlocked', publicKeyHex } : { kind: 'locked', publicKeyHex };
+  if (!unlockedShare) return { kind: 'locked', publicKeyHex };
+
+  // A wallet holding the recovery share was restored after a device loss.
+  const recovered = (await vault.party()) === PARTY.recovery;
+  return { kind: 'unlocked', publicKeyHex, recovered };
 }
 
 /**
@@ -69,7 +74,7 @@ async function createKey(password: string): Promise<CreatedKey> {
   const sessionId = crypto.getRandomValues(new Uint8Array(32));
   const walletId = crypto.randomUUID();
 
-  const outcome = await runDkg(DEFAULT_SERVER, walletId, sessionId);
+  const outcome = await runDkg(await settings.serverUrl(), walletId, sessionId);
 
   pending = {
     shareA: outcome.extensionShare,
@@ -82,14 +87,20 @@ async function createKey(password: string): Promise<CreatedKey> {
   const recoveryShareHex = toHex(outcome.recoveryShare);
   wipe(outcome.recoveryShare);
 
-  return { publicKeyHex: outcome.publicKeyHex, recoveryShareHex };
+  return { publicKeyHex: outcome.publicKeyHex, walletId, recoveryShareHex };
 }
 
 /** The recovery file is saved. Only now do we store share A. */
 async function confirmRecoverySaved(): Promise<Status> {
   if (!pending) throw new Error('There is no key waiting to be stored.');
 
-  await vault.store(pending.password, pending.shareA, pending.publicKeyHex, pending.walletId);
+  await vault.store(
+    pending.password,
+    pending.shareA,
+    pending.publicKeyHex,
+    pending.walletId,
+    PARTY.extension,
+  );
   unlockedShare = pending.shareA;
   // JS strings cannot be wiped; dropping the reference and leaving it to the GC is the best
   // we can do.
@@ -102,6 +113,30 @@ async function confirmRecoverySaved(): Promise<Status> {
 function cancelOnboarding(): void {
   wipe(pending?.shareA);
   pending = undefined;
+}
+
+/**
+ * Restores a wallet on a fresh install from a recovery file.
+ *
+ * The imported share becomes this install's share, and everyday signing runs recovery share plus
+ * server. The wallet can spend again but is **not** a healthy 2-of-3: the lost share stays valid
+ * and there is no longer an independent backup, because reshaping the key would need two shares
+ * in one place (`docs/recovery.md`). The UI has to tell the user that.
+ */
+async function recoverFromFile(
+  password: string,
+  walletId: string,
+  publicKeyHex: string,
+  recoveryShareHex: string,
+): Promise<Status> {
+  if (password.length < 8) throw new Error('The password must be at least 8 characters.');
+  if (await vault.exists()) throw new Error('A key already exists.');
+
+  const share = fromHex(recoveryShareHex);
+  await vault.store(password, share, publicKeyHex, walletId, PARTY.recovery);
+  unlockedShare = share;
+
+  return status();
 }
 
 async function unlock(password: string): Promise<Status> {
@@ -125,14 +160,18 @@ function lock(): void {
 async function sign(digestHex: string): Promise<Signed> {
   const share = requireUnlocked();
   const walletId = await vault.walletId();
-  if (!walletId) throw new Error('This wallet has no server registration.');
+  const localParty = await vault.party();
+  if (!walletId || localParty === undefined) {
+    throw new Error('This wallet has no server registration.');
+  }
 
   await loadWasm();
   const signId = crypto.getRandomValues(new Uint8Array(32));
   const signature = await signWithServer(
-    DEFAULT_SERVER,
+    await settings.serverUrl(),
     walletId,
     share,
+    localParty,
     signId,
     fromHex(digestHex),
   );
@@ -173,7 +212,7 @@ async function handle(request: Request): Promise<unknown> {
       return health;
     }
     case 'serverHealth':
-      return serverHealth(DEFAULT_SERVER);
+      return serverHealth(await settings.serverUrl());
     case 'createKey':
       return createKey(request.password);
     case 'confirmRecoverySaved':
@@ -190,6 +229,17 @@ async function handle(request: Request): Promise<unknown> {
       return sign(request.digestHex);
     case 'signOffline':
       return signOffline(request.digestHex, request.recoveryShareHex);
+    case 'recoverFromFile':
+      return recoverFromFile(
+        request.password,
+        request.walletId,
+        request.publicKeyHex,
+        request.recoveryShareHex,
+      );
+    case 'readSettings':
+      return settings.read();
+    case 'setServerUrl':
+      return settings.setServerUrl(request.serverUrl);
     default: {
       const exhaustive: never = request;
       throw new Error(`Unknown request: ${JSON.stringify(exhaustive)}`);

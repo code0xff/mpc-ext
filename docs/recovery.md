@@ -17,40 +17,47 @@ if the service disappears, the user's funds are still spendable.
 ## Scenario 1 — device lost (share A gone)
 
 1. Install the extension on a new device and import the recovery file (B).
-2. After authenticating the user, the server agrees to join in recovery mode. **B + C** can now
-   sign.
-3. Issue a fresh share A to the new device — see "Issuing a new share" below.
-4. Export a new recovery file and tell the user to destroy the old one.
-5. Until the reshare completes, show the wallet as being in recovery mode and restrict ordinary
-   signing.
+2. The extension stores share B under a new password and registers itself as party 1.
+3. Everyday signing now runs **B + C** — the recovery share plus the server.
 
-### Issuing a new share (reshare)
+The address does not change and the user can spend again. **But the wallet does not return to a
+healthy 2-of-3, and that limitation is structural.**
 
-Upstream refresh **only admits parties that already hold a share**, so it cannot fill an empty
-slot on a new device ([adr/0004](adr/0004-mpc-library-reselection.md)). The recovery file (B)
-and the server share (C) do meet the threshold, though.
+### Why recovery cannot restore three healthy shares
 
-`mpc_core::reshare` implements this. On the user's device:
+Two operations could fix the missing share, and neither is available:
 
-1. Reconstruct the private key from the two surviving shares (Lagrange interpolation).
-2. Immediately split it into three fresh shares (trusted-dealer style).
-3. Distribute the new shares and discard the reconstructed key from memory.
+- **Refresh** rotates every share but requires all existing parties. The lost share's party
+  cannot attend ([adr/0004](adr/0004-mpc-library-reselection.md), finding 3).
+- **Reshare** (`mpc_core::reshare`) reconstructs the private key and re-splits it, but it needs
+  two shares **in one place.** After a device loss the user holds B and the server holds C, and C
+  must never leave the server. Sending it would hand one party a signing-capable pair, which is
+  the invariant the whole design rests on.
 
-The public key is preserved, so the address does not change, and old shares no longer combine
-with the new set. Both properties are covered by tests
-(`crates/mpc-core/tests/adversarial.rs`).
+What follows from that:
 
-**This procedure briefly materialises the private key in one place (a single point of failure).**
-The following constraints apply:
+- **The lost share A stays valid forever.** If someone later recovers the lost device and pairs
+  share A with either the recovery file or the server, they can sign. Refresh is what would have
+  invalidated it, and we cannot run it.
+- **The recovery file is no longer an independent third share.** It now holds the same share the
+  extension holds, so the user has two copies of B and no separate backup.
 
-- It runs **only on the user's device.** The server never sees the reconstructed key.
-- The key stays in memory and is zeroized immediately. It is never written to disk.
-- Tell the user this moment exists. Do not hide it.
-- The design already permits key export, so this adds no new trust assumption.
+So after a device loss the honest advice is: **create a new wallet and move the funds.** The
+recovered wallet is for spending, not for continuing to live in.
 
-A reshare protocol without the single point of failure — implemented by us or contributed
-upstream — is the long-term alternative. In the meantime this procedure is a priority item for
-the external audit.
+The UI must say this plainly. It must not present a recovered wallet as fully restored.
+
+### The real fix
+
+A **distributed reshare** protocol — where B and C jointly issue a fresh set of three shares
+without either leaving its home — solves all of it. Upstream does not implement one. Options, in
+order of preference:
+
+1. Contribute a reshare protocol upstream, or implement one against `mpc-core`.
+2. Switch to a library that has one, if an audited permissive option appears
+   ([adr/0004](adr/0004-mpc-library-reselection.md), mitigation 6).
+
+Until then this limitation is a priority item for the external audit and for the roadmap.
 
 ## Scenario 2 — device and recovery file both lost
 

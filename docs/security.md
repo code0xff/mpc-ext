@@ -26,6 +26,14 @@ Splitting the shares across three trust domains costs us the following
 - **Every signature needs a network round trip.** The computation itself is ~16 ms, but
   perceived latency is dominated by the round trip.
 
+One limitation we cannot currently fix:
+
+- **A lost share stays valid.** Invalidating it needs a refresh, which requires every party to
+  attend, and the lost party cannot. So after a device loss the old share remains signing-capable
+  if someone later recovers the device and pairs it with the server or the recovery file. The
+  mitigation today is advice — move to a new wallet — and the real fix is a distributed reshare
+  protocol (`recovery.md`).
+
 Two assumptions the user can break:
 
 - **Keeping the recovery file on the same machine as the extension** puts two shares in one
