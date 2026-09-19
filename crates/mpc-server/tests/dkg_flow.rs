@@ -8,12 +8,14 @@
 #![allow(clippy::expect_used, clippy::unwrap_used, clippy::panic)]
 
 use axum::body::Body;
-use axum::http::{Request, StatusCode};
+use axum::http::{HeaderMap, HeaderValue, Request, StatusCode};
 use base64::Engine;
 use mpc_core::{DkgParty, Envelope, PartyId, Progress, SignParty, SignProgress};
 use mpc_server::api::{router, AppState};
 use mpc_server::crypto::SealingKey;
+use mpc_server::passkey::PasskeyConfig;
 use mpc_server::store::Store;
+use p256::ecdsa::{signature::Signer, SigningKey};
 use serde_json::{json, Value};
 use tower::ServiceExt;
 
@@ -26,17 +28,511 @@ async fn test_app() -> axum::Router {
     router(AppState {
         store,
         sealing: SealingKey::new(&[42u8; 32]),
+        passkey: PasskeyConfig::new("localhost", "http://localhost:8080")
+            .expect("test passkey configuration"),
     })
 }
 
-async fn post(app: &axum::Router, path: &str, body: Value) -> (StatusCode, Value) {
+#[tokio::test]
+async fn device_key_registration_validates_and_persists_the_public_key() {
+    let app = test_app().await;
+    let public_key = format!("04{}", "ab".repeat(64));
+    let (status, body) = post(
+        &app,
+        "/v1/device-key",
+        json!({ "wallet_id": "wallet-device", "public_key": public_key }),
+    )
+    .await;
+    assert_eq!(
+        status,
+        StatusCode::NO_CONTENT,
+        "registration failed: {body}"
+    );
+
+    let (status, body) = post(
+        &app,
+        "/v1/device-key",
+        json!({ "wallet_id": "wallet-device", "public_key": "not-hex" }),
+    )
+    .await;
+    assert_eq!(
+        status,
+        StatusCode::BAD_REQUEST,
+        "malformed key was accepted: {body}"
+    );
+
+    let (status, body) = post(
+        &app,
+        "/v1/device-key",
+        json!({
+            "wallet_id": "wallet-device",
+            "public_key": format!("02{}", "ab".repeat(64))
+        }),
+    )
+    .await;
+    assert_eq!(
+        status,
+        StatusCode::BAD_REQUEST,
+        "compressed key was accepted: {body}"
+    );
+}
+
+#[tokio::test]
+async fn device_nonce_is_reserved_only_once() {
+    let store = Store::open("sqlite::memory:")
+        .await
+        .expect("the database should open");
+    assert!(store
+        .reserve_device_nonce("wallet-device", "nonce-1", 300)
+        .await
+        .expect("the first reservation should work"));
+    assert!(!store
+        .reserve_device_nonce("wallet-device", "nonce-1", 300)
+        .await
+        .expect("the replay should be checked"));
+    assert!(store
+        .reserve_device_nonce("other-wallet", "nonce-1", 300)
+        .await
+        .expect("a different wallet has its own nonce namespace"));
+}
+
+#[tokio::test]
+async fn passkey_challenges_are_single_use_and_wallet_bound() {
+    let store = Store::open("sqlite::memory:")
+        .await
+        .expect("the database should open");
+    store
+        .put_passkey_challenge("challenge-1", "wallet-a", "sign", &[1, 2, 3], 300)
+        .await
+        .expect("the challenge should be stored");
+    assert_eq!(
+        store
+            .take_passkey_challenge("challenge-1", "wallet-b", "sign")
+            .await
+            .expect("the wrong wallet should be checked"),
+        None
+    );
+    assert_eq!(
+        store
+            .take_passkey_challenge("challenge-1", "wallet-a", "sign")
+            .await
+            .expect("the challenge should be consumed"),
+        Some(vec![1, 2, 3])
+    );
+    assert_eq!(
+        store
+            .take_passkey_challenge("challenge-1", "wallet-a", "sign")
+            .await
+            .expect("the replay should be checked"),
+        None
+    );
+}
+
+#[tokio::test]
+async fn passkey_registration_options_are_authenticated_and_single_use() {
+    let app = test_app().await;
+    let device_key = SigningKey::from_bytes((&[11u8; 32]).into()).expect("device key");
+    let public_key = device_key
+        .verifying_key()
+        .to_encoded_point(false)
+        .as_bytes()
+        .iter()
+        .map(|byte| format!("{byte:02x}"))
+        .collect::<String>();
+    let (status, _) = post(
+        &app,
+        "/v1/device-key",
+        json!({ "wallet_id": "wallet-passkey", "public_key": public_key }),
+    )
+    .await;
+    assert_eq!(status, StatusCode::NO_CONTENT);
+
+    let options_request = json!({ "wallet_id": "wallet-passkey" });
+    let (status, options) = post_with_headers(
+        &app,
+        "/v1/passkeys/register/options",
+        options_request.clone(),
+        device_headers(
+            "/v1/passkeys/register/options",
+            &options_request,
+            &device_key,
+            "passkey-options",
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "options failed: {options}");
+    let challenge_id = options["challenge_id"]
+        .as_str()
+        .expect("the challenge id should be returned")
+        .to_owned();
+    assert_eq!(
+        options["options"]["rp"]["id"], "localhost",
+        "the RP ID must be fixed by server configuration"
+    );
+
+    let finish_request = json!({
+        "wallet_id": "wallet-passkey",
+        "challenge_id": challenge_id,
+        "credential": {}
+    });
+    let (status, body) = post_with_headers(
+        &app,
+        "/v1/passkeys/register/finish",
+        finish_request.clone(),
+        device_headers(
+            "/v1/passkeys/register/finish",
+            &finish_request,
+            &device_key,
+            "passkey-finish-invalid",
+        ),
+    )
+    .await;
+    assert_eq!(
+        status,
+        StatusCode::BAD_REQUEST,
+        "invalid credential: {body}"
+    );
+
+    let (status, body) = post_with_headers(
+        &app,
+        "/v1/passkeys/register/finish",
+        finish_request.clone(),
+        device_headers(
+            "/v1/passkeys/register/finish",
+            &finish_request,
+            &device_key,
+            "passkey-finish-replay",
+        ),
+    )
+    .await;
+    assert_eq!(
+        status,
+        StatusCode::UNAUTHORIZED,
+        "a consumed challenge must not be reusable: {body}"
+    );
+}
+
+#[tokio::test]
+async fn passkey_assertion_binding_is_wallet_and_operation_bound() {
+    let store = Store::open("sqlite::memory:")
+        .await
+        .expect("the database should open");
+    store
+        .put_passkey_credential(
+            "wallet-assertion",
+            br#"{"id":[1],"user_id":[0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0],"static_state":[],"dynamic_state":[true,0,0,0,0,0,0]}"#,
+            0,
+        )
+        .await
+        .expect("the test credential should be stored");
+    let app = router(AppState {
+        store,
+        sealing: SealingKey::new(&[42u8; 32]),
+        passkey: PasskeyConfig::new("localhost", "http://localhost:8080")
+            .expect("test passkey configuration"),
+    });
+    let device_key = SigningKey::from_bytes((&[12u8; 32]).into()).expect("device key");
+    let public_key = device_key
+        .verifying_key()
+        .to_encoded_point(false)
+        .as_bytes()
+        .iter()
+        .map(|byte| format!("{byte:02x}"))
+        .collect::<String>();
+    let (status, _) = post(
+        &app,
+        "/v1/device-key",
+        json!({ "wallet_id": "wallet-assertion", "public_key": public_key }),
+    )
+    .await;
+    assert_eq!(status, StatusCode::NO_CONTENT);
+
+    let options_request = json!({
+        "wallet_id": "wallet-assertion",
+        "purpose": "sign",
+        "operation_id": "sign-1",
+        "digest": "aa".repeat(32)
+    });
+    let (status, options) = post_with_headers(
+        &app,
+        "/v1/passkeys/assert/options",
+        options_request.clone(),
+        device_headers(
+            "/v1/passkeys/assert/options",
+            &options_request,
+            &device_key,
+            "assert-options",
+        ),
+    )
+    .await;
+    assert_eq!(
+        status,
+        StatusCode::OK,
+        "assertion options failed: {options}"
+    );
+    assert_eq!(options["options"]["userVerification"], "required");
+
+    let challenge_id = options["challenge_id"]
+        .as_str()
+        .expect("the challenge id should be returned")
+        .to_owned();
+    let finish_request = json!({
+        "wallet_id": "wallet-assertion",
+        "challenge_id": challenge_id,
+        "purpose": "recovery",
+        "operation_id": "sign-1",
+        "digest": "aa".repeat(32),
+        "credential": {}
+    });
+    let (status, body) = post_with_headers(
+        &app,
+        "/v1/passkeys/assert/finish",
+        finish_request.clone(),
+        device_headers(
+            "/v1/passkeys/assert/finish",
+            &finish_request,
+            &device_key,
+            "assert-finish-substitution",
+        ),
+    )
+    .await;
+    assert_eq!(
+        status,
+        StatusCode::UNAUTHORIZED,
+        "operation substitution: {body}"
+    );
+}
+
+#[tokio::test]
+async fn signing_rejects_tampered_and_replayed_device_proofs() {
+    let store = Store::open("sqlite::memory:")
+        .await
+        .expect("the database should open");
+    let app = router(AppState {
+        store: store.clone(),
+        sealing: SealingKey::new(&[42u8; 32]),
+        passkey: PasskeyConfig::new("localhost", "http://localhost:8080")
+            .expect("test passkey configuration"),
+    });
+    let (_shares, _public_key) = provision(&app, "wallet-auth", 0xd1).await;
+    let device_key = SigningKey::from_bytes((&[8u8; 32]).into()).expect("device key");
+    let public_key = device_key
+        .verifying_key()
+        .to_encoded_point(false)
+        .as_bytes()
+        .iter()
+        .map(|byte| format!("{byte:02x}"))
+        .collect::<String>();
+    let (status, _) = post(
+        &app,
+        "/v1/device-key",
+        json!({ "wallet_id": "wallet-auth", "public_key": public_key }),
+    )
+    .await;
+    assert_eq!(status, StatusCode::NO_CONTENT);
+
+    let body = json!({
+        "wallet_id": "wallet-auth",
+        "sign_id": "d2".repeat(32),
+        "digest": "e3".repeat(32),
+        "counterparty": 0,
+    });
+    store
+        .put_passkey_authorization(
+            "wallet-auth",
+            "sign",
+            body["sign_id"].as_str().expect("sign id"),
+            body["digest"].as_str().expect("digest"),
+            300,
+        )
+        .await
+        .expect("the signing authorization should be stored");
+    let headers = device_headers("/v1/sign/session", &body, &device_key, "auth-replay");
+    let (status, _) =
+        post_with_headers(&app, "/v1/sign/session", body.clone(), headers.clone()).await;
+    assert_eq!(status, StatusCode::OK);
+
+    let (status, _) = post_with_headers(&app, "/v1/sign/session", body, headers).await;
+    assert_eq!(status, StatusCode::UNAUTHORIZED);
+}
+
+#[tokio::test]
+async fn browser_handoff_uses_a_body_token_and_scoped_cookie() {
+    let app = test_app().await;
+    let device_key = SigningKey::from_bytes((&[21u8; 32]).into()).expect("device key");
+    let public_key = device_key
+        .verifying_key()
+        .to_encoded_point(false)
+        .as_bytes()
+        .iter()
+        .map(|byte| format!("{byte:02x}"))
+        .collect::<String>();
+    let (status, _) = post(
+        &app,
+        "/v1/device-key",
+        json!({ "wallet_id": "wallet-browser", "public_key": public_key }),
+    )
+    .await;
+    assert_eq!(status, StatusCode::NO_CONTENT);
+
+    let handoff_request = json!({ "wallet_id": "wallet-browser", "purpose": "register" });
+    let (status, handoff) = post_with_headers(
+        &app,
+        "/v1/passkeys/handoff",
+        handoff_request.clone(),
+        device_headers(
+            "/v1/passkeys/handoff",
+            &handoff_request,
+            &device_key,
+            "browser-handoff",
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "handoff failed: {handoff}");
+    let ceremony_id = handoff["ceremony_id"].as_str().expect("ceremony id");
+    let token = handoff["handoff_token"].as_str().expect("handoff token");
+    assert!(!token.is_empty());
+
     let response = app
         .clone()
         .oneshot(
             Request::builder()
                 .method("POST")
-                .uri(path)
-                .header("content-type", "application/json")
+                .uri("/auth/handoff")
+                .header("content-type", "application/x-www-form-urlencoded")
+                .body(Body::from(format!("handoff_token={token}")))
+                .expect("handoff request should build"),
+        )
+        .await
+        .expect("handoff response should arrive");
+    assert_eq!(response.status(), StatusCode::SEE_OTHER);
+    assert_eq!(response.headers()["location"], "/auth");
+    let set_cookie = response.headers()["set-cookie"]
+        .to_str()
+        .expect("cookie header")
+        .to_owned();
+    assert!(set_cookie.contains("HttpOnly"));
+    assert!(set_cookie.contains("SameSite=Strict"));
+    assert!(!set_cookie.contains(token));
+    let cookie = set_cookie.split(';').next().expect("session cookie");
+
+    let response = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("GET")
+                .uri("/auth/session")
+                .header("cookie", cookie)
+                .body(Body::empty())
+                .expect("options request should build"),
+        )
+        .await
+        .expect("options response should arrive");
+    assert_eq!(response.status(), StatusCode::OK);
+    assert_eq!(response.headers()["cache-control"], "no-store, max-age=0");
+    let options = axum::body::to_bytes(response.into_body(), 1024 * 1024)
+        .await
+        .expect("options body");
+    let options: Value = serde_json::from_slice(&options).expect("options JSON");
+    assert_eq!(options["kind"], "register");
+    assert!(options["options"]["challenge"].is_string());
+
+    let status_request = json!({
+        "wallet_id": "wallet-browser",
+        "ceremony_id": ceremony_id,
+    });
+    let (status, status_body) = post_with_headers(
+        &app,
+        "/v1/passkeys/ceremony/status",
+        status_request.clone(),
+        device_headers(
+            "/v1/passkeys/ceremony/status",
+            &status_request,
+            &device_key,
+            "browser-status",
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "status failed: {status_body}");
+    assert_eq!(status_body["status"], "inProgress");
+
+    let replay = app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/auth/handoff")
+                .header("content-type", "application/x-www-form-urlencoded")
+                .body(Body::from(format!("handoff_token={token}")))
+                .expect("replay request should build"),
+        )
+        .await
+        .expect("replay response should arrive");
+    assert_eq!(replay.status(), StatusCode::UNAUTHORIZED);
+}
+
+#[tokio::test]
+async fn browser_ceremony_assets_are_no_store_and_csp_restricted() {
+    let app = test_app().await;
+    let response = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("GET")
+                .uri("/auth")
+                .body(Body::empty())
+                .expect("page request should build"),
+        )
+        .await
+        .expect("page response should arrive");
+    assert_eq!(response.status(), StatusCode::OK);
+    assert_eq!(response.headers()["cache-control"], "no-store, max-age=0");
+    assert!(response.headers()["content-security-policy"]
+        .to_str()
+        .expect("CSP header")
+        .contains("script-src 'self'"));
+    let page = axum::body::to_bytes(response.into_body(), 64 * 1024)
+        .await
+        .expect("page body");
+    assert!(String::from_utf8_lossy(&page).contains("/auth.js"));
+
+    let response = app
+        .oneshot(
+            Request::builder()
+                .method("GET")
+                .uri("/auth.js")
+                .body(Body::empty())
+                .expect("script request should build"),
+        )
+        .await
+        .expect("script response should arrive");
+    assert_eq!(response.status(), StatusCode::OK);
+    assert_eq!(
+        response.headers()["content-type"],
+        "application/javascript; charset=utf-8"
+    );
+}
+
+async fn post(app: &axum::Router, path: &str, body: Value) -> (StatusCode, Value) {
+    post_with_headers(app, path, body, HeaderMap::new()).await
+}
+
+async fn post_with_headers(
+    app: &axum::Router,
+    path: &str,
+    body: Value,
+    headers: HeaderMap,
+) -> (StatusCode, Value) {
+    let mut request = Request::builder()
+        .method("POST")
+        .uri(path)
+        .header("content-type", "application/json");
+    for (name, value) in &headers {
+        request = request.header(name, value);
+    }
+    let response = app
+        .clone()
+        .oneshot(
+            request
                 .body(Body::from(body.to_string()))
                 .expect("the request should build"),
         )
@@ -49,6 +545,72 @@ async fn post(app: &axum::Router, path: &str, body: Value) -> (StatusCode, Value
         .expect("the body should be readable");
     let value = serde_json::from_slice(&bytes).unwrap_or(Value::Null);
     (status, value)
+}
+
+fn device_headers(path: &str, body: &Value, key: &SigningKey, nonce: &str) -> HeaderMap {
+    let timestamp = time::OffsetDateTime::now_utc().unix_timestamp_nanos() / 1_000_000;
+    let serialized = match path {
+        "/v1/sign/session" => serde_json::to_string(
+            &serde_json::from_value::<mpc_server::api::StartSign>(body.clone())
+                .expect("start body should deserialize"),
+        )
+        .expect("start body should serialize"),
+        "/v1/sign/round" => serde_json::to_string(
+            &serde_json::from_value::<mpc_server::api::AdvanceSign>(body.clone())
+                .expect("round body should deserialize"),
+        )
+        .expect("round body should serialize"),
+        "/v1/passkeys/register/options" => serde_json::to_string(
+            &serde_json::from_value::<mpc_server::passkey::RegisterOptionsRequest>(body.clone())
+                .expect("register options body should deserialize"),
+        )
+        .expect("register options body should serialize"),
+        "/v1/passkeys/register/finish" => serde_json::to_string(
+            &serde_json::from_value::<mpc_server::passkey::RegisterFinishRequest>(body.clone())
+                .expect("register finish body should deserialize"),
+        )
+        .expect("register finish body should serialize"),
+        "/v1/passkeys/assert/options" => serde_json::to_string(
+            &serde_json::from_value::<mpc_server::passkey::AssertOptionsRequest>(body.clone())
+                .expect("assert options body should deserialize"),
+        )
+        .expect("assert options body should serialize"),
+        "/v1/passkeys/assert/finish" => serde_json::to_string(
+            &serde_json::from_value::<mpc_server::passkey::AssertFinishRequest>(body.clone())
+                .expect("assert finish body should deserialize"),
+        )
+        .expect("assert finish body should serialize"),
+        "/v1/passkeys/handoff" => serde_json::to_string(
+            &serde_json::from_value::<mpc_server::passkey::HandoffRequest>(body.clone())
+                .expect("handoff body should deserialize"),
+        )
+        .expect("handoff body should serialize"),
+        "/v1/passkeys/ceremony/status" => serde_json::to_string(
+            &serde_json::from_value::<mpc_server::passkey::CeremonyStatusRequest>(body.clone())
+                .expect("status body should deserialize"),
+        )
+        .expect("status body should serialize"),
+        _ => serde_json::to_string(body).expect("body should serialize"),
+    };
+    let message = format!("POST\n{path}\n{timestamp}\n{nonce}\n{serialized}");
+    let signature: p256::ecdsa::Signature = key.sign(message.as_bytes());
+    let mut headers = HeaderMap::new();
+    headers.insert(
+        "x-device-timestamp",
+        HeaderValue::from_str(&timestamp.to_string()).expect("timestamp header"),
+    );
+    headers.insert(
+        "x-device-nonce",
+        HeaderValue::from_str(nonce).expect("nonce header"),
+    );
+    headers.insert(
+        "x-device-signature",
+        HeaderValue::from_str(
+            &base64::engine::general_purpose::STANDARD.encode(signature.to_bytes()),
+        )
+        .expect("signature header"),
+    );
+    headers
 }
 
 fn to_wire(envelope: &Envelope) -> Value {
@@ -231,7 +793,7 @@ async fn provision(app: &axum::Router, wallet: &str, tag: u8) -> (Vec<mpc_core::
     let mut shares = Vec::new();
     let mut public_key = String::new();
 
-    for _ in 0..4 {
+    for _round in 0..4 {
         let mut next: Vec<Envelope> = Vec::new();
         for party in &mut local {
             let me = party.party();
@@ -282,27 +844,56 @@ async fn provision(app: &axum::Router, wallet: &str, tag: u8) -> (Vec<mpc_core::
 
 #[tokio::test]
 async fn extension_and_server_sign_together() {
-    let app = test_app().await;
+    let store = Store::open("sqlite::memory:")
+        .await
+        .expect("the database should open");
+    let app = router(AppState {
+        store: store.clone(),
+        sealing: SealingKey::new(&[42u8; 32]),
+        passkey: PasskeyConfig::new("localhost", "http://localhost:8080")
+            .expect("test passkey configuration"),
+    });
     let (shares, public_key_hex) = provision(&app, "wallet-sign", 0xb7).await;
+    let device_key = SigningKey::from_bytes((&[7u8; 32]).into()).expect("device key");
+    let public_key = device_key
+        .verifying_key()
+        .to_encoded_point(false)
+        .as_bytes()
+        .iter()
+        .map(|byte| format!("{byte:02x}"))
+        .collect::<String>();
+    let (status, _) = post(
+        &app,
+        "/v1/device-key",
+        json!({ "wallet_id": "wallet-sign", "public_key": public_key }),
+    )
+    .await;
+    assert_eq!(status, StatusCode::NO_CONTENT);
 
     let sign_hex = "c4".repeat(32);
     let digest = [0x39u8; 32];
     let digest_hex = "39".repeat(32);
+    store
+        .put_passkey_authorization("wallet-sign", "sign", &sign_hex, &digest_hex, 300)
+        .await
+        .expect("the signing authorization should be stored");
 
     // The extension drives share A; the server drives share C.
     let (mut extension, mut in_flight) =
         SignParty::start(&shares[0], PartyId(SERVER_PARTY), &[0xc4; 32], &digest)
             .expect("the party should start");
 
-    let (status, body) = post(
+    let start_body = json!({
+        "wallet_id": "wallet-sign",
+        "sign_id": sign_hex,
+        "digest": digest_hex,
+        "counterparty": 0,
+    });
+    let (status, body) = post_with_headers(
         &app,
         "/v1/sign/session",
-        json!({
-            "wallet_id": "wallet-sign",
-            "sign_id": sign_hex,
-            "digest": digest_hex,
-            "counterparty": 0,
-        }),
+        start_body.clone(),
+        device_headers("/v1/sign/session", &start_body, &device_key, "sign-start"),
     )
     .await;
     assert_eq!(
@@ -316,7 +907,7 @@ async fn extension_and_server_sign_together() {
 
     let mut signature: Option<String> = None;
 
-    for _ in 0..4 {
+    for round in 0..4 {
         let mut next: Vec<Envelope> = Vec::new();
 
         let inbox: Vec<Envelope> = in_flight
@@ -336,14 +927,21 @@ async fn extension_and_server_sign_together() {
             })
             .map(to_wire)
             .collect();
-        let (status, body) = post(
+        let round_body = json!({
+            "wallet_id": "wallet-sign",
+            "sign_id": sign_hex,
+            "envelopes": for_server,
+        });
+        let (status, body) = post_with_headers(
             &app,
             "/v1/sign/round",
-            json!({
-                "wallet_id": "wallet-sign",
-                "sign_id": sign_hex,
-                "envelopes": for_server,
-            }),
+            round_body.clone(),
+            device_headers(
+                "/v1/sign/round",
+                &round_body,
+                &device_key,
+                &format!("sign-round-{round}"),
+            ),
         )
         .await;
         assert_eq!(status, StatusCode::OK, "the round should advance: {body}");
@@ -411,5 +1009,116 @@ async fn signing_rejects_an_unknown_wallet() {
     )
     .await;
 
-    assert_eq!(status, StatusCode::NOT_FOUND);
+    assert_eq!(status, StatusCode::UNAUTHORIZED);
+}
+
+#[tokio::test]
+async fn signing_requires_a_matching_one_use_passkey_authorization() {
+    let store = Store::open("sqlite::memory:")
+        .await
+        .expect("the database should open");
+    let app = router(AppState {
+        store: store.clone(),
+        sealing: SealingKey::new(&[42u8; 32]),
+        passkey: PasskeyConfig::new("localhost", "http://localhost:8080")
+            .expect("test passkey configuration"),
+    });
+    let _ = provision(&app, "wallet-grant", 0xe1).await;
+    let device_key = SigningKey::from_bytes((&[21u8; 32]).into()).expect("device key");
+    let public_key = device_key
+        .verifying_key()
+        .to_encoded_point(false)
+        .as_bytes()
+        .iter()
+        .map(|byte| format!("{byte:02x}"))
+        .collect::<String>();
+    let (status, _) = post(
+        &app,
+        "/v1/device-key",
+        json!({ "wallet_id": "wallet-grant", "public_key": public_key }),
+    )
+    .await;
+    assert_eq!(status, StatusCode::NO_CONTENT);
+
+    let sign_id = "a1".repeat(32);
+    let digest = "b2".repeat(32);
+    let start = json!({
+        "wallet_id": "wallet-grant",
+        "sign_id": sign_id,
+        "digest": digest,
+        "counterparty": 0,
+    });
+    let (status, _) = post_with_headers(
+        &app,
+        "/v1/sign/session",
+        start.clone(),
+        device_headers("/v1/sign/session", &start, &device_key, "grant-missing"),
+    )
+    .await;
+    assert_eq!(status, StatusCode::UNAUTHORIZED, "missing grant must fail");
+
+    store
+        .put_passkey_authorization("wallet-grant", "sign", &sign_id, &digest, 300)
+        .await
+        .expect("the grant should be stored");
+    let (status, _) = post_with_headers(
+        &app,
+        "/v1/sign/session",
+        start.clone(),
+        device_headers("/v1/sign/session", &start, &device_key, "grant-first-use"),
+    )
+    .await;
+    assert_eq!(
+        status,
+        StatusCode::OK,
+        "the matching grant must open signing"
+    );
+
+    let (status, _) = post_with_headers(
+        &app,
+        "/v1/sign/session",
+        start,
+        device_headers(
+            "/v1/sign/session",
+            &json!({
+                "wallet_id": "wallet-grant",
+                "sign_id": sign_id,
+                "digest": digest,
+                "counterparty": 0,
+            }),
+            &device_key,
+            "grant-replay",
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::UNAUTHORIZED, "a grant must be one-use");
+
+    let mismatched_sign_id = "c3".repeat(32);
+    store
+        .put_passkey_authorization("wallet-grant", "sign", &mismatched_sign_id, &digest, 300)
+        .await
+        .expect("the mismatched grant should be stored");
+    let mismatched = json!({
+        "wallet_id": "wallet-grant",
+        "sign_id": "d4".repeat(32),
+        "digest": digest,
+        "counterparty": 0,
+    });
+    let (status, _) = post_with_headers(
+        &app,
+        "/v1/sign/session",
+        mismatched.clone(),
+        device_headers(
+            "/v1/sign/session",
+            &mismatched,
+            &device_key,
+            "grant-mismatch",
+        ),
+    )
+    .await;
+    assert_eq!(
+        status,
+        StatusCode::UNAUTHORIZED,
+        "a mismatched grant must fail"
+    );
 }

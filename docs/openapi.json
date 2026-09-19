@@ -2,7 +2,7 @@
   "openapi": "3.1.0",
   "info": {
     "title": "mpc-ext server",
-    "description": "Holds one share of a 2-of-3 MPC key and joins signing. Authentication is not designed yet.",
+    "description": "Holds one share of a 2-of-3 MPC key, joins signing, and verifies server-origin WebAuthn passkey ceremonies.",
     "license": {
       "name": "Apache-2.0",
       "identifier": "Apache-2.0"
@@ -10,6 +10,31 @@
     "version": "0.0.1"
   },
   "paths": {
+    "/v1/device-key": {
+      "post": {
+        "tags": [],
+        "summary": "Registers a device key. Signing endpoints verify requests with this key.",
+        "operationId": "register_device_key",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RegisterDeviceKey"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "204": {
+            "description": "device key registered"
+          },
+          "400": {
+            "description": "malformed request"
+          }
+        }
+      }
+    },
     "/v1/dkg/round": {
       "post": {
         "tags": [],
@@ -86,6 +111,185 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/Health"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/passkeys/assert/finish": {
+      "post": {
+        "tags": [
+          "passkey"
+        ],
+        "summary": "Verifies one passkey assertion and consumes its operation binding.",
+        "operationId": "assert_finish",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AssertFinishRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "assertion verified",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AssertFinishResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/passkeys/assert/options": {
+      "post": {
+        "tags": [
+          "passkey"
+        ],
+        "summary": "Starts a passkey assertion bound to one exact operation.",
+        "operationId": "assert_options",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AssertOptionsRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "assertion options",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AssertOptionsResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/passkeys/ceremony/status": {
+      "post": {
+        "tags": [
+          "passkey"
+        ],
+        "summary": "Returns browser ceremony progress to the extension without exposing credential state.",
+        "operationId": "ceremony_status",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CeremonyStatusRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "browser ceremony status",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CeremonyStatusResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/passkeys/handoff": {
+      "post": {
+        "tags": [
+          "passkey"
+        ],
+        "summary": "Creates the one-use browser handoff after verifying device possession.",
+        "operationId": "handoff",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/HandoffRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "browser ceremony handoff",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HandoffResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/passkeys/register/finish": {
+      "post": {
+        "tags": [
+          "passkey"
+        ],
+        "summary": "Verifies and stores a new passkey credential.",
+        "operationId": "register_finish",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RegisterFinishRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "204": {
+            "description": "passkey registered"
+          }
+        }
+      }
+    },
+    "/v1/passkeys/register/options": {
+      "post": {
+        "tags": [
+          "passkey"
+        ],
+        "summary": "Starts a passkey registration ceremony.",
+        "operationId": "register_options",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RegisterOptionsRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "registration options",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RegisterOptionsResponse"
                 }
               }
             }
@@ -309,6 +513,189 @@
         ],
         "description": "The response to advancing a signing round."
       },
+      "AssertFinishRequest": {
+        "type": "object",
+        "description": "Completes an assertion ceremony.",
+        "required": [
+          "wallet_id",
+          "challenge_id",
+          "purpose",
+          "operation_id",
+          "digest",
+          "credential"
+        ],
+        "properties": {
+          "challenge_id": {
+            "type": "string",
+            "description": "The opaque challenge identifier returned by the options endpoint."
+          },
+          "credential": {
+            "type": "object",
+            "description": "The browser's `PublicKeyCredential` JSON object."
+          },
+          "digest": {
+            "type": "string",
+            "description": "Must exactly match the values bound when options were requested."
+          },
+          "operation_id": {
+            "type": "string",
+            "description": "Must exactly match the values bound when options were requested."
+          },
+          "purpose": {
+            "type": "string",
+            "description": "Must exactly match the values bound when options were requested."
+          },
+          "wallet_id": {
+            "type": "string",
+            "description": "The wallet identifier."
+          }
+        }
+      },
+      "AssertFinishResponse": {
+        "type": "object",
+        "description": "The result of a verified assertion.",
+        "required": [
+          "verified",
+          "purpose",
+          "operation_id"
+        ],
+        "properties": {
+          "operation_id": {
+            "type": "string",
+            "description": "Echoes the already validated operation identifier."
+          },
+          "purpose": {
+            "type": "string",
+            "description": "Echoes the already validated policy purpose."
+          },
+          "verified": {
+            "type": "boolean",
+            "description": "Always true on a successful response."
+          }
+        }
+      },
+      "AssertOptionsRequest": {
+        "type": "object",
+        "description": "Starts an assertion ceremony bound to one exact operation.",
+        "required": [
+          "wallet_id",
+          "purpose",
+          "operation_id",
+          "digest"
+        ],
+        "properties": {
+          "digest": {
+            "type": "string",
+            "description": "The exact 32-byte operation digest, encoded as lowercase or uppercase hex."
+          },
+          "operation_id": {
+            "type": "string",
+            "description": "Application-generated operation identifier."
+          },
+          "purpose": {
+            "type": "string",
+            "description": "The policy operation, currently `sign` or `recovery`."
+          },
+          "wallet_id": {
+            "type": "string",
+            "description": "The wallet identifier."
+          }
+        }
+      },
+      "AssertOptionsResponse": {
+        "type": "object",
+        "description": "A browser assertion ceremony's public options.",
+        "required": [
+          "challenge_id",
+          "options"
+        ],
+        "properties": {
+          "challenge_id": {
+            "type": "string",
+            "description": "Opaque server-side ceremony identifier. It is submitted in the next request body."
+          },
+          "options": {
+            "type": "object",
+            "description": "The options passed to `navigator.credentials.get`."
+          }
+        }
+      },
+      "CeremonyStatusRequest": {
+        "type": "object",
+        "required": [
+          "wallet_id",
+          "ceremony_id"
+        ],
+        "properties": {
+          "ceremony_id": {
+            "type": "string"
+          },
+          "wallet_id": {
+            "type": "string"
+          }
+        }
+      },
+      "CeremonyStatusResponse": {
+        "type": "object",
+        "description": "A device-authenticated, non-secret view of a browser ceremony.",
+        "required": [
+          "ceremony_id",
+          "status"
+        ],
+        "properties": {
+          "ceremony_id": {
+            "type": "string"
+          },
+          "status": {
+            "type": "string"
+          }
+        }
+      },
+      "HandoffRequest": {
+        "type": "object",
+        "description": "Starts a server-origin browser ceremony after device-key authentication.",
+        "required": [
+          "wallet_id",
+          "purpose"
+        ],
+        "properties": {
+          "digest": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "operation_id": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "purpose": {
+            "type": "string",
+            "description": "`register`, `sign`, or `recovery`."
+          },
+          "wallet_id": {
+            "type": "string"
+          }
+        }
+      },
+      "HandoffResponse": {
+        "type": "object",
+        "description": "A one-use token delivered to the extension and then submitted in an HTML form body.",
+        "required": [
+          "ceremony_id",
+          "handoff_token"
+        ],
+        "properties": {
+          "ceremony_id": {
+            "type": "string"
+          },
+          "handoff_token": {
+            "type": "string"
+          }
+        }
+      },
       "Health": {
         "type": "object",
         "description": "The health-check response.",
@@ -324,6 +711,78 @@
           "threshold": {
             "type": "string",
             "description": "This build's threshold configuration, for example `\"2-of-3\"`."
+          }
+        }
+      },
+      "RegisterDeviceKey": {
+        "type": "object",
+        "description": "A device public-key registration request.",
+        "required": [
+          "wallet_id",
+          "public_key"
+        ],
+        "properties": {
+          "public_key": {
+            "type": "string",
+            "description": "The raw SEC1 public key, encoded as lowercase hex."
+          },
+          "wallet_id": {
+            "type": "string",
+            "description": "The wallet identifier."
+          }
+        }
+      },
+      "RegisterFinishRequest": {
+        "type": "object",
+        "description": "Completes a registration ceremony.",
+        "required": [
+          "wallet_id",
+          "challenge_id",
+          "credential"
+        ],
+        "properties": {
+          "challenge_id": {
+            "type": "string",
+            "description": "The opaque challenge identifier returned by the options endpoint."
+          },
+          "credential": {
+            "type": "object",
+            "description": "The browser's `PublicKeyCredential` JSON object."
+          },
+          "wallet_id": {
+            "type": "string",
+            "description": "The wallet identifier."
+          }
+        }
+      },
+      "RegisterOptionsRequest": {
+        "type": "object",
+        "description": "Starts a registration ceremony for a wallet identified by its device key.",
+        "required": [
+          "wallet_id"
+        ],
+        "properties": {
+          "wallet_id": {
+            "type": "string",
+            "description": "The wallet identifier."
+          }
+        }
+      },
+      "RegisterOptionsResponse": {
+        "type": "object",
+        "description": "A browser registration ceremony's public options.",
+        "required": [
+          "challenge_id",
+          "options"
+        ],
+        "properties": {
+          "challenge_id": {
+            "type": "string",
+            "description": "Opaque server-side ceremony identifier. It is submitted in the next request body."
+          },
+          "options": {
+            "type": "object",
+            "description": "The options passed to `navigator.credentials.create`."
           }
         }
       },

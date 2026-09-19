@@ -3,11 +3,10 @@
 //! Every public endpoint is documented with `utoipa`; we do not ship undocumented public
 //! endpoints (`docs/server.md`).
 //!
-//! **Authentication is not designed yet.** The API is currently open for development, and we do
-//! not deploy to production before that design is finished.
+//! Device-key authentication and server-side WebAuthn ceremonies are implemented here.
 
 use axum::extract::State;
-use axum::http::StatusCode;
+use axum::http::{HeaderMap, StatusCode};
 use axum::response::{IntoResponse, Response};
 use axum::routing::{get, post};
 use axum::{Json, Router};
@@ -16,7 +15,15 @@ use serde::{Deserialize, Serialize};
 use utoipa::{OpenApi, ToSchema};
 use utoipa_swagger_ui::SwaggerUi;
 
+use crate::auth::authenticate;
+use crate::auth_page;
 use crate::crypto::SealingKey;
+use crate::passkey::{self, PasskeyConfig};
+use crate::passkey::{
+    AssertFinishRequest, AssertFinishResponse, AssertOptionsRequest, AssertOptionsResponse,
+    CeremonyStatusRequest, CeremonyStatusResponse, HandoffRequest, HandoffResponse,
+    RegisterFinishRequest, RegisterOptionsRequest, RegisterOptionsResponse,
+};
 use crate::store::Store;
 use crate::Error;
 
@@ -33,6 +40,43 @@ pub struct AppState {
     pub store: Store,
     /// The key used to seal data at rest.
     pub sealing: SealingKey,
+    /// Fixed relying-party configuration for the server-origin ceremony.
+    pub passkey: PasskeyConfig,
+}
+
+/// A device public-key registration request.
+#[derive(Debug, Deserialize, ToSchema)]
+pub struct RegisterDeviceKey {
+    /// The wallet identifier.
+    pub wallet_id: String,
+    /// The raw SEC1 public key, encoded as lowercase hex.
+    pub public_key: String,
+}
+
+/// Registers a device key. Signing endpoints verify requests with this key.
+#[utoipa::path(
+    post,
+    path = "/v1/device-key",
+    request_body = RegisterDeviceKey,
+    responses((status = 204, description = "device key registered"), (status = 400, description = "malformed request")),
+)]
+async fn register_device_key(
+    State(state): State<AppState>,
+    Json(request): Json<RegisterDeviceKey>,
+) -> Result<StatusCode, ApiError> {
+    if request.wallet_id.is_empty() || request.wallet_id.len() > 128 {
+        return Err(Error::Protocol("wallet_id is malformed".into()).into());
+    }
+    let public_key = decode_hex(&request.public_key)
+        .ok_or_else(|| Error::Protocol("public_key is not valid hex".into()))?;
+    if public_key.len() != 65 || public_key.first() != Some(&0x04) {
+        return Err(Error::Protocol("public_key must be an uncompressed P-256 key".into()).into());
+    }
+    state
+        .store
+        .register_device_key(&request.wallet_id, &public_key)
+        .await?;
+    Ok(StatusCode::NO_CONTENT)
 }
 
 /// The health-check response.
@@ -244,7 +288,7 @@ async fn advance_dkg(
 }
 
 /// A request to open a signing session.
-#[derive(Debug, Deserialize, ToSchema)]
+#[derive(Debug, Serialize, Deserialize, ToSchema)]
 pub struct StartSign {
     /// The wallet identifier.
     pub wallet_id: String,
@@ -264,7 +308,7 @@ pub struct StartedSign {
 }
 
 /// A request to advance a signing round.
-#[derive(Debug, Deserialize, ToSchema)]
+#[derive(Debug, Serialize, Deserialize, ToSchema)]
 pub struct AdvanceSign {
     /// The wallet identifier.
     pub wallet_id: String,
@@ -306,10 +350,32 @@ pub enum AdvancedSign {
 )]
 async fn start_sign(
     State(state): State<AppState>,
+    headers: HeaderMap,
     Json(request): Json<StartSign>,
 ) -> Result<Json<StartedSign>, ApiError> {
+    authenticate(
+        &state.store,
+        &headers,
+        "POST",
+        "/v1/sign/session",
+        &request.wallet_id,
+        &request,
+    )
+    .await?;
     let sign_id = parse_hex32(&request.sign_id, "sign_id")?;
     let digest = parse_hex32(&request.digest, "digest")?;
+    if !state
+        .store
+        .consume_passkey_authorization(
+            &request.wallet_id,
+            "sign",
+            &request.sign_id,
+            &request.digest,
+        )
+        .await?
+    {
+        return Err(Error::Authentication.into());
+    }
 
     let sealed = state
         .store
@@ -351,8 +417,18 @@ async fn start_sign(
 )]
 async fn advance_sign(
     State(state): State<AppState>,
+    headers: HeaderMap,
     Json(request): Json<AdvanceSign>,
 ) -> Result<Json<AdvancedSign>, ApiError> {
+    authenticate(
+        &state.store,
+        &headers,
+        "POST",
+        "/v1/sign/round",
+        &request.wallet_id,
+        &request,
+    )
+    .await?;
     let sealed = state
         .store
         .take_sign_session(&request.sign_id)
@@ -404,9 +480,23 @@ async fn advance_sign(
 /// The root of the OpenAPI spec.
 #[derive(Debug, OpenApi)]
 #[openapi(
-    paths(health, start_dkg, advance_dkg, start_sign, advance_sign),
+    paths(
+        health,
+        register_device_key,
+        start_dkg,
+        advance_dkg,
+        start_sign,
+        advance_sign,
+        passkey::register_options,
+        passkey::register_finish,
+        passkey::assert_options,
+        passkey::assert_finish,
+        passkey::handoff,
+        passkey::ceremony_status
+    ),
     components(schemas(
         Health,
+        RegisterDeviceKey,
         StartDkg,
         StartedDkg,
         AdvanceDkg,
@@ -416,10 +506,21 @@ async fn advance_sign(
         AdvanceSign,
         AdvancedSign,
         WireEnvelope,
+        RegisterOptionsRequest,
+        RegisterOptionsResponse,
+        RegisterFinishRequest,
+        AssertOptionsRequest,
+        AssertOptionsResponse,
+        AssertFinishRequest,
+        AssertFinishResponse,
+        HandoffRequest,
+        HandoffResponse,
+        CeremonyStatusRequest,
+        CeremonyStatusResponse,
     )),
     info(
         title = "mpc-ext server",
-        description = "Holds one share of a 2-of-3 MPC key and joins signing. Authentication is not designed yet.",
+        description = "Holds one share of a 2-of-3 MPC key, joins signing, and verifies server-origin WebAuthn passkey ceremonies.",
     )
 )]
 pub struct ApiDoc;
@@ -428,10 +529,31 @@ pub struct ApiDoc;
 pub fn router(state: AppState) -> Router {
     Router::new()
         .route("/v1/health", get(health))
+        .route("/v1/device-key", post(register_device_key))
         .route("/v1/dkg/session", post(start_dkg))
         .route("/v1/dkg/round", post(advance_dkg))
         .route("/v1/sign/session", post(start_sign))
         .route("/v1/sign/round", post(advance_sign))
+        .route(
+            "/v1/passkeys/register/options",
+            post(passkey::register_options),
+        )
+        .route(
+            "/v1/passkeys/register/finish",
+            post(passkey::register_finish),
+        )
+        .route("/v1/passkeys/assert/options", post(passkey::assert_options))
+        .route("/v1/passkeys/assert/finish", post(passkey::assert_finish))
+        .route("/v1/passkeys/handoff", post(passkey::handoff))
+        .route(
+            "/v1/passkeys/ceremony/status",
+            post(passkey::ceremony_status),
+        )
+        .route("/auth", get(auth_page::page))
+        .route("/auth.js", get(auth_page::script))
+        .route("/auth/handoff", post(auth_page::handoff))
+        .route("/auth/session", get(auth_page::options))
+        .route("/auth/session/finish", post(auth_page::finish))
         .merge(SwaggerUi::new("/docs").url("/openapi.json", ApiDoc::openapi()))
         .with_state(state)
 }
@@ -456,6 +578,7 @@ impl IntoResponse for ApiError {
     fn into_response(self) -> Response {
         let status = match &self.0 {
             Error::UnknownSession => StatusCode::NOT_FOUND,
+            Error::Authentication => StatusCode::UNAUTHORIZED,
             Error::Protocol(_) => StatusCode::BAD_REQUEST,
             Error::Config(_) | Error::Crypto(_) | Error::Storage(_) | Error::Migration(_) => {
                 StatusCode::INTERNAL_SERVER_ERROR
@@ -497,6 +620,16 @@ fn parse_hex32(value: &str, field: &str) -> Result<[u8; 32], Error> {
 
 fn hex(bytes: &[u8]) -> String {
     bytes.iter().map(|b| format!("{b:02x}")).collect()
+}
+
+fn decode_hex(value: &str) -> Option<Vec<u8>> {
+    if !value.len().is_multiple_of(2) {
+        return None;
+    }
+    (0..value.len())
+        .step_by(2)
+        .map(|i| u8::from_str_radix(value.get(i..i + 2)?, 16).ok())
+        .collect()
 }
 
 /// Serialization used to hold party state between rounds.

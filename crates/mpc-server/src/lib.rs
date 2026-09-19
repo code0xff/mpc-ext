@@ -4,7 +4,10 @@
 //! refuses, no signature is produced (`docs/adr/0005-share-placement.md`).
 
 pub mod api;
+pub mod auth;
+pub mod auth_page;
 pub mod crypto;
+pub mod passkey;
 pub mod store;
 
 /// A server error.
@@ -32,6 +35,12 @@ pub enum Error {
     /// The requested session is unknown or has expired.
     #[error("unknown or expired session")]
     UnknownSession,
+
+    /// The request device proof is missing or invalid.
+    #[error("authentication failed")]
+    Authentication,
+
+    /// The request device proof is missing or invalid.
 
     /// The protocol run failed.
     #[error("protocol error: {0}")]

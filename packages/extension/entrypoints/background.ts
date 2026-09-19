@@ -10,13 +10,30 @@ import type { CreatedKey, Request, Response, Signed, Status, WasmHealth } from '
 import { handlePageRequest } from '../src/pageApi';
 import * as permissions from '../src/permissions';
 import { PARTY, runDkg, signWithRecoveryFile, signWithServer } from '../src/protocolRunner';
-import { health as serverHealth, ServerUnreachable } from '../src/serverClient';
+import {
+  createPasskeyHandoff,
+  health as serverHealth,
+  passkeyCeremonyStatus,
+  registerDeviceKey,
+  ServerUnreachable,
+} from '../src/serverClient';
+import { createDeviceKey, exportDevicePublicKey, storeDeviceKey } from '../src/deviceKey';
 import * as settings from '../src/settings';
 import * as vault from '../src/vault';
 import { ethereum_address, loadWasm, threshold_config } from '../src/wasm';
 
 /** The decrypted share A. Disappears with the worker, and is never persisted. */
 let unlockedShare: Uint8Array | undefined;
+
+/** A handoff token is held only until the extension launcher submits its form body. */
+let pendingPasskey:
+  | {
+      serverUrl: string;
+      handoffToken: string;
+      ceremonyId: string;
+      tabId?: number;
+    }
+  | undefined;
 
 /**
  * In-flight onboarding state. **Nothing is persisted** until the recovery file is confirmed
@@ -27,7 +44,14 @@ let unlockedShare: Uint8Array | undefined;
  * a failure leaves no trace at all.
  */
 let pending:
-  { shareA: Uint8Array; publicKeyHex: string; walletId: string; password: string } | undefined;
+  | {
+      shareA: Uint8Array;
+      publicKeyHex: string;
+      walletId: string;
+      password: string;
+      deviceKey: CryptoKeyPair;
+    }
+  | undefined;
 
 function toHex(bytes: Uint8Array): string {
   return [...bytes].map((b) => b.toString(16).padStart(2, '0')).join('');
@@ -78,12 +102,14 @@ async function createKey(password: string): Promise<CreatedKey> {
   const walletId = crypto.randomUUID();
 
   const outcome = await runDkg(await settings.serverUrl(), walletId, sessionId);
+  const deviceKey = await createDeviceKey();
 
   pending = {
     shareA: outcome.extensionShare,
     publicKeyHex: outcome.publicKeyHex,
     walletId,
     password,
+    deviceKey,
   };
 
   // Share B is handed over here and left nowhere in worker memory.
@@ -97,6 +123,9 @@ async function createKey(password: string): Promise<CreatedKey> {
 async function confirmRecoverySaved(): Promise<Status> {
   if (!pending) throw new Error('There is no key waiting to be stored.');
 
+  const publicDeviceKey = await exportDevicePublicKey(pending.deviceKey.publicKey);
+  await registerDeviceKey(await settings.serverUrl(), pending.walletId, publicDeviceKey);
+  await storeDeviceKey(pending.deviceKey);
   await vault.store(
     pending.password,
     pending.shareA,
@@ -136,6 +165,10 @@ async function recoverFromFile(
   if (await vault.exists()) throw new Error('A key already exists.');
 
   const share = fromHex(recoveryShareHex);
+  const deviceKey = await createDeviceKey();
+  const publicDeviceKey = await exportDevicePublicKey(deviceKey.publicKey);
+  await registerDeviceKey(await settings.serverUrl(), walletId, publicDeviceKey);
+  await storeDeviceKey(deviceKey);
   await vault.store(password, share, publicKeyHex, walletId, PARTY.recovery);
   unlockedShare = share;
 
@@ -147,6 +180,61 @@ async function unlock(password: string): Promise<Status> {
   if (!share) throw new Error('That password is not correct.');
   unlockedShare = share;
   return status();
+}
+
+async function startPasskey(
+  purpose: 'register' | 'sign' | 'recovery',
+  operationId?: string,
+  digest?: string,
+): Promise<{ ceremonyId: string }> {
+  const walletId = await vault.walletId();
+  if (!walletId) throw new Error('This wallet is not initialized.');
+  const serverUrl = await settings.serverUrl();
+  const handoff = await createPasskeyHandoff(serverUrl, walletId, purpose, operationId, digest);
+  pendingPasskey = {
+    serverUrl,
+    handoffToken: handoff.handoff_token,
+    ceremonyId: handoff.ceremony_id,
+  };
+  const tab = await chrome.tabs.create({ url: chrome.runtime.getURL('auth-launcher.html') });
+  pendingPasskey.tabId = tab.id;
+  return { ceremonyId: handoff.ceremony_id };
+}
+
+async function passkeyLauncherReady(): Promise<{ serverUrl: string; handoffToken: string }> {
+  if (!pendingPasskey) throw new Error('There is no pending passkey ceremony.');
+  return {
+    serverUrl: pendingPasskey.serverUrl,
+    handoffToken: pendingPasskey.handoffToken,
+  };
+}
+
+async function passkeyStatus(ceremonyId: string) {
+  const walletId = await vault.walletId();
+  if (!walletId) throw new Error('This wallet is not initialized.');
+  return passkeyCeremonyStatus(await settings.serverUrl(), walletId, ceremonyId);
+}
+
+/** Completes a server-origin passkey ceremony before a signing session is opened. */
+async function authorizeSign(signId: string, digest: string): Promise<void> {
+  const { ceremonyId } = await startPasskey('sign', signId, digest);
+  const startedAt = Date.now();
+  try {
+    for (;;) {
+      if (Date.now() - startedAt > 120_000) {
+        throw new Error('The passkey ceremony timed out.');
+      }
+      await new Promise((resolve) => setTimeout(resolve, 500));
+      const result = await passkeyStatus(ceremonyId);
+      if (result.status === 'completed') return;
+    }
+  } finally {
+    const tabId = pendingPasskey?.tabId;
+    pendingPasskey = undefined;
+    if (tabId !== undefined) {
+      await chrome.tabs.remove(tabId).catch(() => undefined);
+    }
+  }
 }
 
 function lock(): void {
@@ -207,6 +295,7 @@ async function sign(digestHex: string): Promise<Signed> {
 
   await loadWasm();
   const signId = crypto.getRandomValues(new Uint8Array(32));
+  await authorizeSign(toHex(signId), digestHex);
   const signature = await signWithServer(
     await settings.serverUrl(),
     walletId,
@@ -280,6 +369,14 @@ async function handle(request: Request): Promise<unknown> {
       return settings.read();
     case 'setServerUrl':
       return settings.setServerUrl(request.serverUrl);
+    case 'registerPasskey':
+      return startPasskey('register');
+    case 'assertPasskey':
+      return startPasskey(request.purpose, request.operationId, request.digest);
+    case 'passkeyLauncherReady':
+      return passkeyLauncherReady();
+    case 'passkeyStatus':
+      return passkeyStatus(request.ceremonyId);
     case 'pendingApprovals':
       return approvals.pending();
     case 'decideApproval':

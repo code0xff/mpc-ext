@@ -32,12 +32,15 @@ operations such as DKG and recovery commit atomically inside a transaction. Back
 
 Tables:
 
-| Table               | Contents                                                                               |
-| ------------------- | -------------------------------------------------------------------------------------- |
-| `key_shares`        | The **ciphertext** of share C, public key, `format_version`, timestamps                |
-| `dkg_sessions`      | The **sealed** party state of an in-flight DKG, plus an expiry (10 minutes by default) |
-| `recovery_requests` | Recovery requests, cooling-off expiry, status                                          |
-| `audit_log`         | Append-only audit log                                                                  |
+| Table                 | Contents                                                                               |
+| --------------------- | -------------------------------------------------------------------------------------- |
+| `key_shares`          | The **ciphertext** of share C, public key, `format_version`, timestamps                |
+| `dkg_sessions`        | The **sealed** party state of an in-flight DKG, plus an expiry (10 minutes by default) |
+| `passkey_credentials` | WebAuthn credential public state and dynamic authenticator state                       |
+| `passkey_challenges`  | One-use, expiring ceremony state and operation binding                                 |
+| `browser_ceremonies`  | One-use handoff, browser session, and ceremony options/status                          |
+| `recovery_requests`   | Recovery requests, cooling-off expiry, status                                          |
+| `audit_log`           | Append-only audit log                                                                  |
 
 Rules:
 
@@ -52,15 +55,23 @@ Rules:
 
 ## API
 
-| Endpoint                    | Purpose                                        |
-| --------------------------- | ---------------------------------------------- |
-| `POST /v1/dkg/session`      | Open a DKG session                             |
-| `POST /v1/dkg/round`        | Exchange DKG round messages                    |
-| `POST /v1/sign/session`     | Open an everyday signing session               |
-| `POST /v1/sign/round`       | Exchange signing round messages                |
-| `POST /v1/recovery/request` | Start recovery (begins the cooling-off period) |
-| `POST /v1/recovery/sign`    | Join recovery-mode signing                     |
-| `GET  /v1/health`           | Health check                                   |
+| Endpoint                             | Purpose                                        |
+| ------------------------------------ | ---------------------------------------------- |
+| `POST /v1/dkg/session`               | Open a DKG session                             |
+| `POST /v1/dkg/round`                 | Exchange DKG round messages                    |
+| `POST /v1/sign/session`              | Open an everyday signing session               |
+| `POST /v1/sign/round`                | Exchange signing round messages                |
+| `POST /v1/passkeys/register/options` | Start a server-origin passkey registration     |
+| `POST /v1/passkeys/register/finish`  | Verify and persist a passkey registration      |
+| `POST /v1/passkeys/assert/options`   | Start an operation-bound assertion             |
+| `POST /v1/passkeys/assert/finish`    | Verify and consume an assertion                |
+| `POST /v1/passkeys/handoff`          | Create a one-use server-origin browser handoff |
+| `POST /v1/passkeys/ceremony/status`  | Read browser ceremony status                   |
+| `POST /auth/handoff`                 | Exchange a body token for an HttpOnly session  |
+| `GET  /auth`                         | Serve the fixed-origin WebAuthn ceremony page  |
+| `POST /v1/recovery/request`          | Start recovery (begins the cooling-off period) |
+| `POST /v1/recovery/sign`             | Join recovery-mode signing                     |
+| `GET  /v1/health`                    | Health check                                   |
 
 - `GET /docs` serves Swagger UI and `GET /openapi.json` the spec.
 - The spec is generated from code (`make openapi`) and the generated
@@ -69,8 +80,15 @@ Rules:
 
 ## Authentication
 
-**Designed, not yet implemented** ([adr/0006](adr/0006-server-authentication.md)). Until it lands
-the server runs with a development-only token and warns on start-up.
+The device-key layer is implemented: the extension registers a P-256 public key, signs every
+signing request with the request body, timestamp and nonce, and the server verifies the signature
+and rejects nonce replays. The server-side WebAuthn adapter is now implemented: it creates and
+durably stores library ceremony state, verifies the fixed RP/origin, requires user verification,
+persists the minimum credential state, and consumes operation bindings exactly once. A verified
+signing assertion creates a short-lived one-use authorization bound to the wallet, signing ID and
+digest; `/v1/sign/session` consumes that authorization atomically before opening MPC state. The
+server-origin browser page and extension launcher deliver registration/assertion responses without
+placing handoff tokens in URLs. Recovery authorization remains follow-up work.
 
 Two mechanisms with two jobs:
 
@@ -89,7 +107,12 @@ Settled regardless:
 
 - Recovery requires the passkey **and** a cooling-off period. Possession is not intent.
 - Starting recovery notifies the registered channel and the user can cancel.
-- **We do not deploy to production before this is implemented.**
+- **We do not deploy to production before recovery authorization is implemented.**
+- Signing now consumes a verified assertion atomically; recovery still requires the same treatment.
+
+The current local default is RP ID `localhost` and origin `http://localhost:8080`. Production
+configuration must set `MPC_SERVER_RP_ID` and an HTTPS `MPC_SERVER_ORIGIN`; the origin is fixed at
+startup and is never taken from the request Host header.
 
 ## Availability
 

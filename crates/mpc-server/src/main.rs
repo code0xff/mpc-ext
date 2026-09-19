@@ -7,6 +7,7 @@ use std::net::SocketAddr;
 
 use mpc_server::api::{router, AppState};
 use mpc_server::crypto::SealingKey;
+use mpc_server::passkey::PasskeyConfig;
 use mpc_server::store::Store;
 use tracing_subscriber::EnvFilter;
 
@@ -25,11 +26,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let state = AppState {
         store: Store::open(&database_url).await?,
         sealing: SealingKey::from_env()?,
+        passkey: PasskeyConfig::from_env()?,
     };
 
     let listener = tokio::net::TcpListener::bind(addr).await?;
     tracing::info!(%addr, docs = "/docs", "mpc-server listening");
-    tracing::warn!("authentication is not implemented yet; do not deploy this to production");
+    tracing::info!(rp_id = %state.passkey.rp_id, origin = %state.passkey.origin, "WebAuthn RP configured");
 
     axum::serve(listener, router(state)).await?;
     Ok(())

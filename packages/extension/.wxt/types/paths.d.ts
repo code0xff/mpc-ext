@@ -6,6 +6,7 @@ declare module "wxt/browser" {
     | ""
     | "/"
     | "/approve.html"
+    | "/auth-launcher.html"
     | "/background.js"
     | "/content-scripts/provider.js"
     | "/content-scripts/relay.js"

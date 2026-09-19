@@ -1,6 +1,6 @@
 # ADR-0006: Server authentication — a passkey plus a device key
 
-- Status: accepted, with one technical question to settle before implementation
+- Status: accepted; server-origin ceremony and signing assertion enforcement implemented, recovery enforcement remains follow-up work
 - Date: 2026-09-18
 
 ## Context
@@ -51,20 +51,16 @@ Because share A plus the recovery file sign without the server at all
 passkey guards the server's participation, never the user's funds — which is the property that
 lets us require it strictly.
 
-## Open question — where the WebAuthn ceremony runs
+## Decision — where the WebAuthn ceremony runs
 
-**This has to be verified by a spike before implementation.** A WebAuthn relying party is
-identified by a domain, and `chrome-extension://` origins do not obviously qualify. Two shapes:
+The ceremony runs on the server's own HTTPS web origin. A WebAuthn relying party is identified by
+a domain, and the server can validate the browser's exact origin without relying on extension-origin
+behavior. The server receives ceremony state through the HTTP body; challenges and credentials are
+never put in URLs.
 
-1. **In the extension.** Simplest and needs no browsing. Requires confirming that current Chrome
-   lets an extension page act as a relying party, and what it uses as the RP ID.
-2. **On the server's own web origin.** The extension opens a tab to the server for the ceremony.
-   Unambiguously supported and works for self-hosting, at the cost of friction and of the server
-   needing to serve a page.
-
-We take shape 1 if the spike confirms it and shape 2 otherwise. **We do not assume the answer**;
-this project has already been burned once by recording an unverified fact as settled
-([adr/0001](0001-mpc-library.md)).
+The RP ID and allowed origin are fixed at server startup (`MPC_SERVER_RP_ID` and
+`MPC_SERVER_ORIGIN`). They are not derived from an incoming Host header. Local development may
+use the documented `localhost` HTTP origin; production requires HTTPS.
 
 ## Consequences
 
@@ -76,8 +72,9 @@ this project has already been burned once by recording an unverified fact as set
   surface: store the minimum and no personal data.
 - Recovery keeps its cooling-off period, its notification and its cancellation on top of the
   passkey. A passkey proves possession, not that the request is wanted.
-- **We do not deploy to production until this is implemented.** Until then the server runs with a
-  development-only token and warns on start-up (`docs/server.md`).
+- **We do not deploy to production until recovery enforcement is implemented.** Browser ceremony
+  and atomic signing enforcement are in place; recovery remains an incremental server-side
+  milestone (`docs/server.md`).
 
 ## Alternatives
 

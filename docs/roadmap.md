@@ -43,16 +43,19 @@
 - [ ] Distributed reshare, so a lost share can actually be invalidated (`recovery.md`)
 - [x] Make the server URL configurable, for self-hosting
 - [x] Settle the server authentication design ([adr/0006](adr/0006-server-authentication.md))
-- [ ] Spike: can an extension page act as a WebAuthn relying party? (ADR-0006 open question)
-- [ ] Implement the device key (request signing, rate limits, audit)
-- [ ] Implement passkey registration and assertion, required for signing and recovery
+- [x] Decide the WebAuthn ceremony location: server-origin ceremony (ADR-0006)
+- [x] Implement the device key (request signing, nonce replay protection, audit boundary)
+- [x] Implement the server-side passkey registration/assertion adapter and durable challenge binding
+- [x] Add the server-origin ceremony page and extension handoff/client
+- [x] Require one verified assertion for each signing operation
+- [ ] Require one verified assertion for each recovery operation
 - [x] Signing approval UI (digest-level; the origin-aware screen arrives with the provider)
 
 ## Phase 4 — web integration
 
-- [ ] EIP-1193 / EIP-6963 provider
-- [ ] Per-origin permission management
-- [ ] `packages/sdk` and an example dApp
+- [x] EIP-1193 / EIP-6963 provider
+- [x] Per-origin permission management
+- [x] `packages/sdk` and an example dApp
 
 ## Phase 5 — export
 

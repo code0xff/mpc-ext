@@ -50,6 +50,15 @@ export type Request =
     }
   | { type: 'readSettings' }
   | { type: 'setServerUrl'; serverUrl: string }
+  | { type: 'registerPasskey' }
+  | {
+      type: 'assertPasskey';
+      purpose: 'sign' | 'recovery';
+      operationId: string;
+      digest: string;
+    }
+  | { type: 'passkeyLauncherReady' }
+  | { type: 'passkeyStatus'; ceremonyId: string }
   /** Relayed from a page by the content script. The origin comes from the sender, not the page. */
   | { type: 'pageRequest'; method: string; params?: unknown[] }
   | { type: 'pendingApprovals' }
