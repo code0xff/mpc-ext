@@ -558,7 +558,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "a098d1e8bd4aa18b8d8851e8468fc7a8b25496090ddceb28a0e70b683b429805"
 dependencies = [
  "bincode",
- "elliptic-curve 0.14.0-rc.29",
+ "elliptic-curve 0.14.0-rc.34",
  "getrandom 0.4.3",
  "hex",
  "hmac 0.13.0",
@@ -583,7 +583,7 @@ dependencies = [
  "bech32",
  "bs58",
  "dkls23-core",
- "elliptic-curve 0.14.0-rc.29",
+ "elliptic-curve 0.14.0-rc.34",
  "hex",
  "k256",
  "keccak",
@@ -621,7 +621,7 @@ checksum = "91bbdd377139884fafcad8dc43a760a3e1e681aa26db910257fa6535b70e1829"
 dependencies = [
  "der 0.8.2",
  "digest 0.11.3",
- "elliptic-curve 0.14.0-rc.29",
+ "elliptic-curve 0.14.0-rc.34",
  "rfc6979 0.5.0",
  "serdect",
  "signature 3.0.0",
@@ -668,9 +668,9 @@ dependencies = [
  "base16ct 0.2.0",
  "crypto-bigint 0.5.5",
  "digest 0.10.7",
- "ff",
+ "ff 0.13.1",
  "generic-array",
- "group",
+ "group 0.13.0",
  "pem-rfc7468",
  "pkcs8 0.10.2",
  "rand_core 0.6.4",
@@ -681,20 +681,20 @@ dependencies = [
 
 [[package]]
 name = "elliptic-curve"
-version = "0.14.0-rc.29"
+version = "0.14.0-rc.34"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e84043d573efd4ac9d2d125817979a379204bf7e328b25a4a30487e8d100e618"
+checksum = "88a44d097c9f3e494ddc19f77af5aab89f0b3b2652cde370ec8c6064faca5bd2"
 dependencies = [
  "base16ct 1.0.0",
  "crypto-bigint 0.7.5",
  "crypto-common 0.2.2",
  "digest 0.11.3",
+ "ff 0.14.0",
+ "group 0.14.0",
  "hybrid-array",
  "once_cell",
  "pkcs8 0.11.0",
  "rand_core 0.10.1",
- "rustcrypto-ff",
- "rustcrypto-group",
  "sec1 0.8.1",
  "serdect",
  "subtle",
@@ -745,6 +745,16 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c0b50bfb653653f9ca9095b427bed08ab8d75a137839d9ad64eb11810d5b6393"
 dependencies = [
  "rand_core 0.6.4",
+ "subtle",
+]
+
+[[package]]
+name = "ff"
+version = "0.14.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "a1f686ab92a9fb0eaf188f6c6c87b89490baa6fdb0db4544ba4dc47f7942489f"
+dependencies = [
+ "rand_core 0.10.1",
  "subtle",
 ]
 
@@ -935,8 +945,19 @@ version = "0.13.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "f0f9ef7462f7c099f518d754361858f86d8a07af53ba9af0fe635bbccb151a63"
 dependencies = [
- "ff",
+ "ff 0.13.1",
  "rand_core 0.6.4",
+ "subtle",
+]
+
+[[package]]
+name = "group"
+version = "0.14.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "7fd1a1c7a5206c5b7a3f5a0d7ccd3ff85d0c8f5133d62a02680255b0004af5f4"
+dependencies = [
+ "ff 0.14.0",
+ "rand_core 0.10.1",
  "subtle",
 ]
 
@@ -1255,7 +1276,7 @@ checksum = "f7d2c6c227649d5ec80eaae541f1736232641a0bcdb3062a52b34edb42054158"
 dependencies = [
  "cpubits",
  "ecdsa 0.17.0-rc.16",
- "elliptic-curve 0.14.0-rc.29",
+ "elliptic-curve 0.14.0-rc.34",
  "serdect",
  "sha2 0.11.0",
  "signature 3.0.0",
@@ -1400,7 +1421,7 @@ version = "0.0.1"
 dependencies = [
  "bincode",
  "dkls23-secp256k1",
- "elliptic-curve 0.14.0-rc.29",
+ "elliptic-curve 0.14.0-rc.34",
  "k256",
  "rustcrypto-ff",
  "serde",
