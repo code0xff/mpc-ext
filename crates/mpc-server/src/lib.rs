@@ -8,6 +8,7 @@ pub mod auth;
 pub mod auth_page;
 pub mod crypto;
 pub mod passkey;
+pub mod reshare;
 pub mod store;
 
 /// A server error.

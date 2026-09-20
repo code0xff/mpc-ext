@@ -28,10 +28,10 @@ use crate::store::Store;
 use crate::Error;
 
 /// The party the server drives, which holds share C.
-const SERVER_PARTY: PartyId = PartyId(2);
+pub(crate) const SERVER_PARTY: PartyId = PartyId(2);
 
 /// How long a DKG session stays valid. Generous, but not unbounded.
-const SESSION_TTL_SECONDS: i64 = 600;
+pub(crate) const SESSION_TTL_SECONDS: i64 = 600;
 
 /// State shared by the handlers.
 #[derive(Clone, Debug)]
@@ -494,6 +494,10 @@ async fn advance_sign(
         advance_dkg,
         start_sign,
         advance_sign,
+        crate::reshare::start,
+        crate::reshare::advance,
+        crate::reshare::commit,
+        crate::reshare::abort,
         passkey::register_options,
         passkey::register_finish,
         passkey::assert_options,
@@ -512,6 +516,11 @@ async fn advance_sign(
         StartedSign,
         AdvanceSign,
         AdvancedSign,
+        crate::reshare::StartReshare,
+        crate::reshare::StartedReshare,
+        crate::reshare::AdvanceReshare,
+        crate::reshare::AdvancedReshare,
+        crate::reshare::FinishReshare,
         WireEnvelope,
         RegisterOptionsRequest,
         RegisterOptionsResponse,
@@ -541,6 +550,10 @@ pub fn router(state: AppState) -> Router {
         .route("/v1/dkg/round", post(advance_dkg))
         .route("/v1/sign/session", post(start_sign))
         .route("/v1/sign/round", post(advance_sign))
+        .route("/v1/reshare/session", post(crate::reshare::start))
+        .route("/v1/reshare/round", post(crate::reshare::advance))
+        .route("/v1/reshare/commit", post(crate::reshare::commit))
+        .route("/v1/reshare/abort", post(crate::reshare::abort))
         .route(
             "/v1/passkeys/register/options",
             post(passkey::register_options),
@@ -608,7 +621,7 @@ fn parse_session_id(value: &str) -> Result<[u8; 32], Error> {
 }
 
 /// Parses a 32-byte hex value, naming the field in any error.
-fn parse_hex32(value: &str, field: &str) -> Result<[u8; 32], Error> {
+pub(crate) fn parse_hex32(value: &str, field: &str) -> Result<[u8; 32], Error> {
     if value.len() != 64 {
         return Err(Error::Protocol(format!(
             "{field} must be 64 hex characters"
@@ -625,7 +638,7 @@ fn parse_hex32(value: &str, field: &str) -> Result<[u8; 32], Error> {
     Ok(out)
 }
 
-fn hex(bytes: &[u8]) -> String {
+pub(crate) fn hex(bytes: &[u8]) -> String {
     bytes.iter().map(|b| format!("{b:02x}")).collect()
 }
 
