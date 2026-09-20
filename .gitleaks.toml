@@ -2,6 +2,6 @@
 [extend]
 useDefault = true
 
-[[allowlist]]
+[allowlist]
 description = "Dummy values and examples in documentation"
 paths = ['''docs/.*\.md''', '''README\.md''', '''web/.*''']

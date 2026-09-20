@@ -1,12 +1,16 @@
 /**
  * Device-key request authentication primitives.
  *
- * The private key is non-extractable and is intended to be kept in extension storage. This key
- * identifies an installation; it is not a second factor (`docs/adr/0006-server-authentication.md`).
+ * The private key is non-extractable and lives in IndexedDB, which stores `CryptoKey` objects by
+ * structured clone. `chrome.storage.local` cannot: it serialises to JSON, so a stored key comes
+ * back as an empty object and signing fails. This key identifies an installation; it is not a
+ * second factor (`docs/adr/0006-server-authentication.md`).
  */
 
 const encoder = new TextEncoder();
-const STORAGE_KEY = 'device-key';
+const DB_NAME = 'mpc-ext-device';
+const STORE = 'device-key';
+const RECORD = 'pair';
 
 export interface SignedRequest {
   timestamp: number;
@@ -41,15 +45,43 @@ export function createDeviceKey(): Promise<CryptoKeyPair> {
   ]) as Promise<CryptoKeyPair>;
 }
 
-/** Stores the non-extractable pair in extension storage. */
+function openDatabase(): Promise<IDBDatabase> {
+  return new Promise((resolve, reject) => {
+    const request = indexedDB.open(DB_NAME, 1);
+    request.onupgradeneeded = () => request.result.createObjectStore(STORE);
+    request.onsuccess = () => resolve(request.result);
+    request.onerror = () =>
+      reject(request.error ?? new Error('Could not open the device key store.'));
+  });
+}
+
+async function withStore<T>(
+  mode: IDBTransactionMode,
+  run: (store: IDBObjectStore) => IDBRequest<T>,
+): Promise<T> {
+  const db = await openDatabase();
+  try {
+    return await new Promise<T>((resolve, reject) => {
+      const request = run(db.transaction(STORE, mode).objectStore(STORE));
+      request.onsuccess = () => resolve(request.result);
+      request.onerror = () =>
+        reject(request.error ?? new Error('Could not access the device key store.'));
+    });
+  } finally {
+    db.close();
+  }
+}
+
+/** Stores the non-extractable pair. It never leaves this browser profile. */
 export async function storeDeviceKey(pair: CryptoKeyPair): Promise<void> {
-  await chrome.storage.local.set({ [STORAGE_KEY]: pair });
+  await withStore('readwrite', (store) => store.put(pair, RECORD));
 }
 
 /** Loads the installation key pair, if this wallet has one. */
 export async function loadDeviceKey(): Promise<CryptoKeyPair | undefined> {
-  const stored = await chrome.storage.local.get(STORAGE_KEY);
-  return stored[STORAGE_KEY] as CryptoKeyPair | undefined;
+  const pair = await withStore<CryptoKeyPair | undefined>('readonly', (store) => store.get(RECORD));
+  // A pair that lost its keys on the way in would fail later with a confusing WebCrypto error.
+  return pair?.privateKey instanceof CryptoKey ? pair : undefined;
 }
 
 /** Exports only the public key, in the format accepted by WebCrypto importKey. */
