@@ -53,7 +53,9 @@ pub struct RegisterDeviceKey {
     pub public_key: String,
 }
 
-/// Registers a device key. Signing endpoints verify requests with this key.
+/// Registers a wallet's first device key. Signing endpoints verify requests with this key.
+///
+/// A wallet that already has one is refused: replacing a key needs a recovery.
 #[utoipa::path(
     post,
     path = "/v1/device-key",
@@ -72,10 +74,16 @@ async fn register_device_key(
     if public_key.len() != 65 || public_key.first() != Some(&0x04) {
         return Err(Error::Protocol("public_key must be an uncompressed P-256 key".into()).into());
     }
-    state
+    if !state
         .store
         .register_device_key(&request.wallet_id, &public_key)
-        .await?;
+        .await?
+    {
+        return Err(Error::Protocol(
+            "this wallet already has a device key; replace it through a recovery".into(),
+        )
+        .into());
+    }
     Ok(StatusCode::NO_CONTENT)
 }
 

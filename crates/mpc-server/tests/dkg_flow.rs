@@ -80,6 +80,46 @@ async fn device_key_registration_validates_and_persists_the_public_key() {
     );
 }
 
+/// Anyone who knows a wallet id could once replace its device key and lock the real extension
+/// out. Registration is first-use only now, and the original key must keep working.
+#[tokio::test]
+async fn a_second_device_key_cannot_replace_the_first() {
+    let (app, _store, device_key) = wallet_with_device("wallet-squat").await;
+
+    let intruder = SigningKey::from_bytes((&[99u8; 32]).into()).expect("intruder key");
+    let intruder_key = hex_of(intruder.verifying_key().to_encoded_point(false).as_bytes());
+    let (status, body) = post(
+        &app,
+        "/v1/device-key",
+        json!({ "wallet_id": "wallet-squat", "public_key": intruder_key }),
+    )
+    .await;
+    assert_eq!(
+        status,
+        StatusCode::BAD_REQUEST,
+        "a replacement must be refused: {body}"
+    );
+
+    // The first key still authenticates, and the intruder's does not.
+    let request = json!({ "wallet_id": "wallet-squat", "purpose": "register" });
+    let (status, _) = reshare_post(
+        &app,
+        &device_key,
+        "/v1/passkeys/handoff",
+        request.clone(),
+        "kept",
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "the original key must still work");
+    let (status, _) =
+        reshare_post(&app, &intruder, "/v1/passkeys/handoff", request, "intruder").await;
+    assert_eq!(
+        status,
+        StatusCode::UNAUTHORIZED,
+        "the intruder's key must not work"
+    );
+}
+
 #[tokio::test]
 async fn device_nonce_is_reserved_only_once() {
     let store = Store::open("sqlite::memory:")
