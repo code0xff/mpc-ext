@@ -163,6 +163,7 @@ pub async fn finish(
         .and_then(|value| value.to_str().ok())
         != Some(state.passkey.origin.as_str())
     {
+        tracing::warn!("browser ceremony finished from an unexpected origin");
         return Err(Error::Authentication.into());
     }
     let session_id = session_cookie(&headers)?;
@@ -170,8 +171,14 @@ pub async fn finish(
         .store
         .browser_ceremony(&session_id)
         .await?
-        .ok_or(Error::Authentication)?;
-    let challenge_id = ceremony.challenge_id.ok_or(Error::Authentication)?;
+        .ok_or_else(|| {
+            tracing::warn!("browser ceremony session is unknown or expired");
+            Error::Authentication
+        })?;
+    let challenge_id = ceremony.challenge_id.ok_or_else(|| {
+        tracing::warn!("browser ceremony finished before it was given a challenge");
+        Error::Authentication
+    })?;
     if ceremony.kind == "register" {
         passkey::verify_registration(&state, &ceremony.wallet_id, &challenge_id, &credential)
             .await?;
@@ -187,6 +194,7 @@ pub async fn finish(
         passkey::verify_assertion(&state, &request).await?;
     }
     if !state.store.complete_browser_ceremony(&session_id).await? {
+        tracing::warn!("browser ceremony was already completed or has expired");
         return Err(Error::Authentication.into());
     }
     Ok(json_response(&BrowserFinishResponse { verified: true }))

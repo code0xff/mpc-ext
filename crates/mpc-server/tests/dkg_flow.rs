@@ -172,6 +172,15 @@ async fn passkey_registration_options_are_authenticated_and_single_use() {
         options["options"]["rp"]["id"], "localhost",
         "the RP ID must be fixed by server configuration"
     );
+    // Assertions accept P-256 keys only, so ES256 (-7) must be the only algorithm on offer. An
+    // authenticator that supports EdDSA would otherwise register a key that can never assert.
+    let offered: Vec<i64> = options["options"]["pubKeyCredParams"]
+        .as_array()
+        .expect("the algorithms should be listed")
+        .iter()
+        .map(|param| param["alg"].as_i64().expect("alg"))
+        .collect();
+    assert_eq!(offered, vec![-7], "only ES256 may be offered");
 
     let finish_request = json!({
         "wallet_id": "wallet-passkey",
@@ -471,6 +480,62 @@ async fn browser_handoff_uses_a_body_token_and_scoped_cookie() {
         .await
         .expect("replay response should arrive");
     assert_eq!(replay.status(), StatusCode::UNAUTHORIZED);
+}
+
+/// The extension signs the text `JSON.stringify` produces, which leaves out `undefined` fields.
+/// Building the signature from a typed round trip, as `device_headers` does, hides any mismatch
+/// between that text and what the server re-serializes, and a `register` handoff (no operation
+/// id, no digest) was rejected in real use for exactly that reason.
+#[tokio::test]
+async fn register_handoff_accepts_the_exact_body_the_extension_signs() {
+    let app = test_app().await;
+    let device_key = SigningKey::from_bytes((&[23u8; 32]).into()).expect("device key");
+    let public_key = hex_of(
+        device_key
+            .verifying_key()
+            .to_encoded_point(false)
+            .as_bytes(),
+    );
+    let (status, _) = post(
+        &app,
+        "/v1/device-key",
+        json!({ "wallet_id": "wallet-js", "public_key": public_key }),
+    )
+    .await;
+    assert_eq!(status, StatusCode::NO_CONTENT);
+
+    // Exactly what `JSON.stringify({ wallet_id, purpose, operation_id: undefined, digest: undefined })`
+    // yields.
+    let sent = r#"{"wallet_id":"wallet-js","purpose":"register"}"#;
+    let timestamp = time::OffsetDateTime::now_utc().unix_timestamp_nanos() / 1_000_000;
+    let message = format!("POST\n/v1/passkeys/handoff\n{timestamp}\njs-nonce\n{sent}");
+    let signature: p256::ecdsa::Signature = device_key.sign(message.as_bytes());
+    let mut headers = HeaderMap::new();
+    headers.insert(
+        "x-device-timestamp",
+        HeaderValue::from_str(&timestamp.to_string()).expect("timestamp header"),
+    );
+    headers.insert("x-device-nonce", HeaderValue::from_static("js-nonce"));
+    headers.insert(
+        "x-device-signature",
+        HeaderValue::from_str(
+            &base64::engine::general_purpose::STANDARD.encode(signature.to_bytes()),
+        )
+        .expect("signature header"),
+    );
+
+    let (status, body) = post_with_headers(
+        &app,
+        "/v1/passkeys/handoff",
+        serde_json::from_str(sent).expect("the body is JSON"),
+        headers,
+    )
+    .await;
+    assert_eq!(
+        status,
+        StatusCode::OK,
+        "a register handoff signed over the extension's exact text must be accepted: {body}"
+    );
 }
 
 #[tokio::test]
