@@ -107,3 +107,15 @@ We do not hide these limits in marketing, the README or the UI.
   [audit.md](audit.md).
 - Until the audit is done, the README and the extension UI carry a **do not use with real
   assets** warning.
+
+## Accepted dependency advisories
+
+`deny.toml` ignores two advisories. Each carries its reason there and is re-reviewed on the
+condition stated next to it.
+
+- **RUSTSEC-2023-0071 (`rsa`, Marvin Attack).** Affects RSA private-key operations and has no
+  fix. `rsa` arrives only through `webauthn_rp` ([adr/0006](adr/0006-server-authentication.md)),
+  which uses it to verify passkey signatures. We perform no RSA decryption or signing.
+- **RUSTSEC-2025-0141 (`bincode` 1.x, unmaintained).** Not a vulnerability. It is a dependency of
+  the pinned `dkls23-core` ([adr/0004](adr/0004-mpc-library-reselection.md)) and is in scope for
+  the external audit ([audit.md](audit.md)).

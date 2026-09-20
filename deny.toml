@@ -9,6 +9,11 @@ confidence-threshold = 0.9
 [advisories]
 version = 2
 yanked = "deny"
+# Each entry needs a reason and a condition for reviewing it again. Do not add one without both.
+ignore = [
+  { id = "RUSTSEC-2023-0071", reason = "Marvin Attack on RSA private-key operations, and there is no fixed release. `rsa` comes only through `webauthn_rp` (ADR-0006), which uses it to verify RS256 passkey signatures (`pkcs1v15` and `RsaPublicKey`); `RsaPrivateKey` appears only in its tests. We never decrypt or sign with RSA. Review when `webauthn_rp` moves off `rsa` or starts private-key operations." },
+  { id = "RUSTSEC-2025-0141", reason = "bincode 1.x is unmaintained, not vulnerable. It comes from `dkls23-core`, which ADR-0004 pins to an exact version, and serialises protocol messages there. Review when upstream drops it, or when the audit (docs/audit.md) covers the message format." },
+]
 
 [bans]
 multiple-versions = "warn"
