@@ -1121,4 +1121,55 @@ async fn signing_requires_a_matching_one_use_passkey_authorization() {
         StatusCode::UNAUTHORIZED,
         "a mismatched grant must fail"
     );
+
+    // Driving the recovery share needs a `recovery` grant; a `sign` grant must not open it.
+    let recovery_id = "e5".repeat(32);
+    let recovery = json!({
+        "wallet_id": "wallet-grant",
+        "sign_id": recovery_id,
+        "digest": digest,
+        "counterparty": 1,
+    });
+    store
+        .put_passkey_authorization("wallet-grant", "sign", &recovery_id, &digest, 300)
+        .await
+        .expect("the sign grant should be stored");
+    let (status, _) = post_with_headers(
+        &app,
+        "/v1/sign/session",
+        recovery.clone(),
+        device_headers(
+            "/v1/sign/session",
+            &recovery,
+            &device_key,
+            "recovery-wrong-purpose",
+        ),
+    )
+    .await;
+    assert_eq!(
+        status,
+        StatusCode::UNAUTHORIZED,
+        "a sign grant must not open a recovery session"
+    );
+    store
+        .put_passkey_authorization("wallet-grant", "recovery", &recovery_id, &digest, 300)
+        .await
+        .expect("the recovery grant should be stored");
+    let (status, _) = post_with_headers(
+        &app,
+        "/v1/sign/session",
+        recovery.clone(),
+        device_headers(
+            "/v1/sign/session",
+            &recovery,
+            &device_key,
+            "recovery-right-purpose",
+        ),
+    )
+    .await;
+    assert_eq!(
+        status,
+        StatusCode::OK,
+        "a recovery grant must open a recovery session"
+    );
 }

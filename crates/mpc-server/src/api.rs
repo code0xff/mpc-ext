@@ -364,11 +364,18 @@ async fn start_sign(
     .await?;
     let sign_id = parse_hex32(&request.sign_id, "sign_id")?;
     let digest = parse_hex32(&request.digest, "digest")?;
+    // Driving the recovery share (party 1) is a recovery operation and needs its own assertion.
+    // A `sign` grant must not open it, so the two policies stay separately enforceable.
+    let purpose = match request.counterparty {
+        0 => "sign",
+        1 => "recovery",
+        _ => return Err(Error::Protocol("counterparty must be 0 or 1".into()).into()),
+    };
     if !state
         .store
         .consume_passkey_authorization(
             &request.wallet_id,
-            "sign",
+            purpose,
             &request.sign_id,
             &request.digest,
         )

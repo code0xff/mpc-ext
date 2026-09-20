@@ -1,6 +1,6 @@
 # ADR-0006: Server authentication — a passkey plus a device key
 
-- Status: accepted; server-origin ceremony and signing assertion enforcement implemented, recovery enforcement remains follow-up work
+- Status: accepted; server-origin ceremony and signing and recovery assertion enforcement implemented
 - Date: 2026-09-18
 
 ## Context

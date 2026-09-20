@@ -88,7 +88,7 @@ persists the minimum credential state, and consumes operation bindings exactly o
 signing assertion creates a short-lived one-use authorization bound to the wallet, signing ID and
 digest; `/v1/sign/session` consumes that authorization atomically before opening MPC state. The
 server-origin browser page and extension launcher deliver registration/assertion responses without
-placing handoff tokens in URLs. Recovery authorization remains follow-up work.
+placing handoff tokens in URLs. Opening a session that drives the recovery share (`counterparty` 1) consumes a one-use `recovery` grant bound to the sign id and digest; a `sign` grant does not open it, and `counterparty` values other than 0 or 1 are rejected.
 
 Two mechanisms with two jobs:
 

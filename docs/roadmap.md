@@ -29,6 +29,7 @@
 - [x] Password setup, locking and unlocking
 - [x] Run DKG, export share B as the recovery file, and keep only share A
 - [x] Recovery file download
+- [x] Encrypt the recovery file under a password chosen at export (format v3; plaintext v2 removed)
 - [x] Atomic onboarding — nothing is persisted until the recovery export is confirmed
 - [x] Decide the recovery file format — the full share, as a file (ADR-0005)
 - [x] Basic UI (onboarding, lock/unlock)
@@ -48,7 +49,7 @@
 - [x] Implement the server-side passkey registration/assertion adapter and durable challenge binding
 - [x] Add the server-origin ceremony page and extension handoff/client
 - [x] Require one verified assertion for each signing operation
-- [ ] Require one verified assertion for each recovery operation
+- [x] Require one verified assertion for each recovery operation (recovery-share signing needs a `recovery` grant)
 - [x] Signing approval UI (digest-level; the origin-aware screen arrives with the provider)
 
 ## Phase 4 — web integration
@@ -59,7 +60,7 @@
 
 ## Phase 5 — export
 
-- [ ] Recovery file import (the export side is done)
+- [x] Recovery file import (restore in the popup, offline signing)
 - [ ] Full private key export in the UI, with warnings
 - [ ] Re-export prompts after refresh or reshare
 
