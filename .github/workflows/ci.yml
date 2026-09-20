@@ -35,6 +35,13 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5
+      # `pnpm install` runs `wxt prepare`, which imports the wasm glue, so build it first.
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
+      - uses: Swatinem/rust-cache@v2
+      - uses: jetli/wasm-pack-action@v0.4.0
+      - run: make build-wasm
       - uses: pnpm/action-setup@v4
       - uses: actions/setup-node@v5
         with:
@@ -73,8 +80,9 @@ jobs:
         with:
           node-version: 22
           cache: pnpm
-      - run: pnpm install --frozen-lockfile
+      # Before install: `wxt prepare` in the postinstall imports the wasm glue.
       - run: make build-wasm
+      - run: pnpm install --frozen-lockfile
       - run: pnpm -C packages/extension build
       # The smoke test drives a real server, so it needs the binary.
       - run: make build-server
