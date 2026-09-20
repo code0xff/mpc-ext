@@ -13,7 +13,12 @@ created after the fact.
 - Right after DKG, share B is exported as a file encrypted with the user's password. The
   extension never stores B ([adr/0005](adr/0005-share-placement.md)).
 - Used for: recovering a lost device, emergency signing when the server is down, and key export.
-- Format: `format_version` + KDF/AEAD parameters + ciphertext + public key, in a JSON container.
+- Format (version 3): a JSON container with `format_version`, KDF/AEAD parameters, salt, nonce,
+  ciphertext, the public key and the wallet id. The share is encrypted with PBKDF2-SHA256 +
+  AES-GCM under a **recovery password** chosen at export time (it may differ from the wallet
+  password, and must be stored apart from the file). The public key and wallet id are bound to
+  the ciphertext as associated data, so they cannot be swapped between files.
+- Version 2 files were plaintext. No key was ever issued with one, so import refuses them.
 - **It is roughly 230 KB** (the share itself is ~114 KB because it carries OT setup state). It
   cannot be turned into a mnemonic or a QR code, so it has to be kept as a file
   ([adr/0005](adr/0005-share-placement.md)).

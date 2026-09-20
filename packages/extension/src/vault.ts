@@ -30,7 +30,7 @@ interface VaultRecord {
   party: number;
 }
 
-function toB64(bytes: Uint8Array): string {
+export function toB64(bytes: Uint8Array): string {
   // Shares are over 100 KB. Spreading them into String.fromCharCode(...bytes) in one go blows
   // the argument-count limit and overflows the stack, so build the string in chunks.
   const CHUNK = 0x8000;
@@ -41,7 +41,7 @@ function toB64(bytes: Uint8Array): string {
   return btoa(out);
 }
 
-function fromB64(value: string): Uint8Array {
+export function fromB64(value: string): Uint8Array {
   return Uint8Array.from(atob(value), (c) => c.charCodeAt(0));
 }
 

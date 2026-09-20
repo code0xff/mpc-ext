@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from 'react';
 
 import type { CreatedKey, Status, WasmHealth } from '../../src/messages';
 import { send } from './api';
+import { MIN_PASSWORD_LENGTH } from '../../src/recoveryFile';
 import { downloadRecoveryFile } from './recoveryFile';
 import { OriginsPanel } from './OriginsPanel';
 import { RecoverPanel } from './RecoverPanel';
@@ -13,6 +14,8 @@ export function App() {
   const [health, setHealth] = useState<WasmHealth>();
   const [created, setCreated] = useState<CreatedKey>();
   const [downloaded, setDownloaded] = useState(false);
+  const [filePassword, setFilePassword] = useState('');
+  const [filePasswordAgain, setFilePasswordAgain] = useState('');
   const [serverUp, setServerUp] = useState<boolean>();
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string>();
@@ -81,6 +84,8 @@ export function App() {
             run(async () => {
               setCreated(await send<CreatedKey>({ type: 'createKey', password }));
               setDownloaded(false);
+              setFilePassword('');
+              setFilePasswordAgain('');
               await refresh();
             })
           }
@@ -98,13 +103,44 @@ export function App() {
             Keep it <b>somewhere other than</b> this machine. Storing it alongside the extension
             defeats the design. Files are easy to lose, so keep several copies.
           </p>
+          <p>
+            The file is encrypted with a <b>recovery password</b> you choose now. You will need it
+            to restore or to sign without the server, so write it down separately. It can differ
+            from your wallet password.
+          </p>
+          <label htmlFor="recovery-password">Recovery password</label>
+          <input
+            id="recovery-password"
+            type="password"
+            value={filePassword}
+            autoComplete="new-password"
+            onChange={(event) => {
+              setFilePassword(event.target.value);
+              setDownloaded(false);
+            }}
+          />
+          <label htmlFor="recovery-password-again">Repeat recovery password</label>
+          <input
+            id="recovery-password-again"
+            type="password"
+            value={filePasswordAgain}
+            autoComplete="new-password"
+            onChange={(event) => setFilePasswordAgain(event.target.value)}
+          />
           <button
             type="button"
             id="download-recovery"
-            onClick={() => {
-              downloadRecoveryFile(created);
-              setDownloaded(true);
-            }}
+            disabled={
+              busy ||
+              filePassword.length < MIN_PASSWORD_LENGTH ||
+              filePassword !== filePasswordAgain
+            }
+            onClick={() =>
+              run(async () => {
+                await downloadRecoveryFile(created, filePassword);
+                setDownloaded(true);
+              })
+            }
           >
             Download recovery file (about 230 KB)
           </button>
