@@ -41,6 +41,7 @@
 - [x] **Everyday signing transport** — extension (A) ↔ server (C) round exchange, verified end to end over HTTP
 - [x] The A+B emergency signing path for server outages (offline, no server involved)
 - [x] Recovery flow (B+C) — import the recovery file and sign again, verified in the smoke test
+- [x] Decide the distributed reshare design ([adr/0007](adr/0007-distributed-reshare.md))
 - [ ] Distributed reshare, so a lost share can actually be invalidated (`recovery.md`)
 - [x] Make the server URL configurable, for self-hosting
 - [x] Settle the server authentication design ([adr/0006](adr/0006-server-authentication.md))
