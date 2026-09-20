@@ -21,11 +21,14 @@ In priority order.
    - The private key reconstruction inside `reshare` and `export_private_key`. It is the only
      point in the design where a single point of failure exists (`recovery.md`). Review the
      lifetime of the reconstructed value, zeroization, and every call path.
+   - The distributed reshare (`DkgParty::start_reshare`): Lagrange-weighted contributions fed
+     through the DKG phases, and the public key check that guards it. It is a new use of the
+     upstream phases that nobody has reviewed (`adr/0007-distributed-reshare.md`).
    - Share serialization and party identifier handling.
 3. **Extension storage and locking** — KDF parameters, AEAD usage, and how long secrets live in
    memory while unlocked (`security.md`).
-4. **The recovery path** — server authentication, the cooling-off period, and state transitions
-   around reshare (`recovery.md`).
+4. **The recovery path** — server authentication, the cooling-off period, and the reshare's
+   staging and commit on the server (`recovery.md`, `server.md`).
 5. **The web provider boundary** — origin checks and the approval flow (`web-api.md`).
 
 ## Out of scope

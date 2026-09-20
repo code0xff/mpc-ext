@@ -45,7 +45,26 @@ nothing behind.
   replaced — refresh cannot do this, since a brand-new device holds no share
   ([adr/0004](adr/0004-mpc-library-reselection.md)). It briefly reconstructs the private key, so
   it runs on the user's device only (`recovery.md`).
+- **Distributed reshare** does the same without reconstructing anything in one place
+  ([adr/0007](adr/0007-distributed-reshare.md)). See the flow below.
 - Periodic refresh is deferred work (`roadmap.md`).
+
+### Reshare (device lost)
+
+The two survivors, B and C, and a joining A'. It runs as a DKG with two changes.
+
+- **Contributions.** Each survivor's polynomial has the constant term `λ·s`, its Lagrange
+  coefficient at zero over the survivor pair times its own share, and a random slope. The joiner
+  contributes zero fragments. `phase2` sums what it receives, so the new shares lie on a
+  polynomial whose constant term is the original secret. Zero-share seeds and multiplication (OT)
+  state are set up afresh for every pair, as in DKG.
+- **Acceptance.** `step5` already checks that the three points lie on one polynomial. On top of
+  that, `mpc-core` compares the resulting public key with the wallet's and aborts on any
+  difference, so a wrong contribution from either side cannot change the address.
+
+The session type is `DkgParty::start_reshare` in `mpc-core`, exposed to the extension through
+`DkgSession.reshareSurvivor` and `reshareJoiner`, and to the server through `/v1/reshare/*`
+(`server.md`). The server stages its new share and swaps it in only on commit.
 
 ## Messages
 

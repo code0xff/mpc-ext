@@ -8,7 +8,7 @@
 | Server compromise                                | The server holds only share C. It cannot sign or reconstruct alone                                                                                           |
 | Device theft (extension data taken while locked) | Storage is fully encrypted and useless without the password                                                                                                  |
 | **Extension taken over while unlocked**          | The extension holds only share A, so it **cannot sign alone.** The server acts as the second factor with rate limits, anomaly blocking and user confirmation |
-| Recovery file stolen                             | Only share B. Cannot sign alone                                                                                                                              |
+| Recovery file stolen                             | Only share B, encrypted under its own password. Cannot sign alone                                                                                            |
 | Service shutdown or outage                       | The user signs with A + B. Funds are not locked                                                                                                              |
 | Supply chain attack                              | Minimal dependencies, pinned lockfiles, reproducible builds, signed releases                                                                                 |
 | Memory scraping                                  | Zeroize after use, auto-lock when idle                                                                                                                       |
@@ -26,13 +26,17 @@ Splitting the shares across three trust domains costs us the following
 - **Every signature needs a network round trip.** The computation itself is ~16 ms, but
   perceived latency is dominated by the round trip.
 
-One limitation we cannot currently fix:
+One limitation remains, in a smaller form than before:
 
-- **A lost share stays valid.** Invalidating it needs a refresh, which requires every party to
-  attend, and the lost party cannot. So after a device loss the old share remains signing-capable
-  if someone later recovers the device and pairs it with the server or the recovery file. The
-  mitigation today is advice — move to a new wallet — and the real fix is a distributed reshare
-  protocol (`recovery.md`).
+- **A lost share stays valid until its old partners are gone.** Refresh needs every party, and the
+  lost one cannot attend, so a lost share is never revoked outright. A distributed reshare
+  ([adr/0007](adr/0007-distributed-reshare.md)) gives the wallet fresh shares and makes the
+  server delete its old one, which leaves the old recovery file as the one thing that can still
+  pair with the lost share. The user has to destroy it. Until a restored wallet has been reshared,
+  the old advice applies: move to a new wallet.
+- **The reshare ceremony trusts the device it runs on.** That device plays two of the new parties,
+  so it can compute the key, and it learns the server's old share on the way. Key creation has the
+  same exposure. The reshare is offered only on a freshly restored install.
 
 Two assumptions the user can break:
 

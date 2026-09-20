@@ -47,18 +47,39 @@ recovered wallet is for spending, not for continuing to live in.
 
 The UI must say this plainly. It must not present a recovered wallet as fully restored.
 
-### The fix: a distributed reshare
+### Restoring full protection: a distributed reshare
 
-[ADR-0007](adr/0007-distributed-reshare.md) settles the design. B and C run a DKG in which each
-contributes its Lagrange-weighted share as the constant term, and a fresh A' joins on the new
-device. C never leaves the server and is replaced by C' only after the user has saved the new
-recovery file. The address stays the same.
+A restored wallet shows a "Restore full protection" card. It runs the reshare that
+[ADR-0007](adr/0007-distributed-reshare.md) describes. The extension and the server each
+contribute their surviving share (B and C) as the constant term of a DKG, and a fresh A' joins on
+the new device. Nothing is sent to the server that lets it learn B, and C never leaves the server.
+The address stays the same.
 
-Two limits remain, both stated in the ADR. The new device can compute the key while the ceremony
-runs, exactly as it can at key creation. And the lost share A stays dangerous for anyone who
-also holds the **old** recovery file, so the user must destroy it.
+What the user sees, in order:
 
-Until the reshare ships, the advice above stands.
+1. The wallet password and a passkey approval. The server is about to replace its share, so it
+   asks for the same approval as a recovery signature.
+2. The reshare runs. The passkey ceremony opens a tab that closes the popup, so the popup can be
+   reopened afterwards and picks the result up.
+3. The user saves a **new** recovery file, encrypted under a new recovery password. This is the
+   only time the new share B' exists outside memory.
+4. On confirming, the server commits (its old share is deleted) and the extension stores A'. The
+   wallet is a healthy 2-of-3 again and the "restored" banner goes away.
+
+Cancelling at any point before step 4 leaves the previous shares valid, and a reshare that
+stopped halfway leaves nothing behind (the server drops its staged share after 30 minutes).
+
+Two limits remain, both stated in the ADR.
+
+- **The new device can compute the key while the ceremony runs**, exactly as it can at key
+  creation, and it learns the server's old share along the way. Run it only on a device you trust,
+  and only on the fresh install you restored onto.
+- **The lost share A stays dangerous for anyone who also holds the old recovery file.** Old A plus
+  old B still reconstructs the key, and no reshare can change that. The server deletes its old
+  share on commit, so the old file is the remaining exposure. The user has to destroy it.
+
+A user who does not run the reshare is in the position described above, and the advice to move to
+a new wallet still holds for them.
 
 ## Scenario 2 — device and recovery file both lost
 
@@ -80,4 +101,6 @@ The server share C alone cannot sign. **This case is unrecoverable.**
 
 - Signing succeeds for all three pairings: A+C (everyday), A+B (server down), B+C (device lost).
 - Aborting recovery leaves the previous shares valid (rollback safety).
-- After refresh or reshare, old shares can no longer produce a valid signature.
+- After a reshare, the lost share A cannot sign with any new share (`mpc-core` and server tests).
+- After a reshare, the old shares still sign among themselves. That is why the server deletes its
+  old share on commit and why the old recovery file has to be destroyed.
