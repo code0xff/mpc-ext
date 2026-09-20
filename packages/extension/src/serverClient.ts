@@ -150,6 +150,70 @@ export async function advanceDkg(
   });
 }
 
+export type ReshareAdvance =
+  { state: 'inProgress'; envelopes: WireEnvelope[] } | { state: 'staged'; public_key: string };
+
+/**
+ * Opens a reshare and collects the server's round 1 envelopes. Needs the device key and a
+ * `recovery` passkey grant bound to this reshare (`docs/adr/0007-distributed-reshare.md`).
+ */
+export async function startReshare(
+  baseUrl: string,
+  walletId: string,
+  reshareIdHex: string,
+): Promise<WireEnvelope[]> {
+  const body = await post<{ envelopes: WireEnvelope[] }>(
+    baseUrl,
+    '/v1/reshare/session',
+    { wallet_id: walletId, reshare_id: reshareIdHex },
+    true,
+  );
+  return body.envelopes;
+}
+
+/** Sends reshare envelopes and receives the next round. The last round stages the new share. */
+export async function advanceReshare(
+  baseUrl: string,
+  walletId: string,
+  reshareIdHex: string,
+  envelopes: WireEnvelope[],
+): Promise<ReshareAdvance> {
+  return post<ReshareAdvance>(
+    baseUrl,
+    '/v1/reshare/round',
+    { wallet_id: walletId, reshare_id: reshareIdHex, envelopes },
+    true,
+  );
+}
+
+/** Makes the staged share live on the server and deletes the old one. */
+export async function commitReshare(
+  baseUrl: string,
+  walletId: string,
+  reshareIdHex: string,
+): Promise<void> {
+  await post<void>(
+    baseUrl,
+    '/v1/reshare/commit',
+    { wallet_id: walletId, reshare_id: reshareIdHex },
+    true,
+  );
+}
+
+/** Drops a reshare. The server keeps its current share. */
+export async function abortReshare(
+  baseUrl: string,
+  walletId: string,
+  reshareIdHex: string,
+): Promise<void> {
+  await post<void>(
+    baseUrl,
+    '/v1/reshare/abort',
+    { wallet_id: walletId, reshare_id: reshareIdHex },
+    true,
+  );
+}
+
 export type SignResult =
   { state: 'inProgress'; envelopes: WireEnvelope[] } | { state: 'completed'; signature: string };
 

@@ -20,6 +20,8 @@ export type Status =
        * not a healthy 2-of-3, and the UI has to say so (`docs/recovery.md`).
        */
       recovered: boolean;
+      /** True while a reshare has staged a new server share and is waiting to be finished. */
+      reshareInProgress: boolean;
     };
 
 export type Request =
@@ -54,6 +56,20 @@ export type Request =
    * the MPC benefit is gone for whoever holds the result. Needs the wallet password again.
    */
   | { type: 'exportPrivateKey'; password: string; recoveryShareHex: string }
+  /**
+   * Begin resharing a wallet that was restored from a recovery file, giving it a healthy 2-of-3
+   * again (`docs/adr/0007-distributed-reshare.md`). Needs the wallet password and a passkey
+   * assertion. It returns at once: the passkey ceremony opens a tab, which closes the popup, so
+   * progress is polled with `reshareProgress` and the result fetched with `takeReshareRecovery`.
+   */
+  | { type: 'startReshare'; password: string }
+  | { type: 'reshareProgress' }
+  /** The new recovery share, once and only once, after `reshareProgress` says `ready`. */
+  | { type: 'takeReshareRecovery' }
+  /** The new recovery file is saved: make the new server share live and store the new A. */
+  | { type: 'confirmReshareSaved' }
+  /** Abandon a reshare that has not been committed. The current shares stay valid. */
+  | { type: 'cancelReshare' }
   | { type: 'readSettings' }
   | { type: 'setServerUrl'; serverUrl: string }
   | { type: 'registerPasskey' }
@@ -99,4 +115,11 @@ export interface Signed {
 /** The result of a private key export. Shown to the user once and never stored. */
 export interface ExportedKey {
   privateKeyHex: string;
+}
+
+/** How far a reshare has got. Never carries a secret. */
+export interface ReshareProgress {
+  phase: 'idle' | 'working' | 'ready' | 'failed';
+  /** Set once when `phase` is `failed`. */
+  error?: string;
 }

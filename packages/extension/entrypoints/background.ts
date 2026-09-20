@@ -11,6 +11,7 @@ import type {
   CreatedKey,
   ExportedKey,
   Request,
+  ReshareProgress,
   Response,
   Signed,
   Status,
@@ -18,9 +19,18 @@ import type {
 } from '../src/messages';
 import { handlePageRequest } from '../src/pageApi';
 import * as permissions from '../src/permissions';
-import { PARTY, runDkg, signWithRecoveryFile, signWithServer } from '../src/protocolRunner';
+import {
+  PARTY,
+  runDkg,
+  runReshare,
+  signWithRecoveryFile,
+  signWithServer,
+} from '../src/protocolRunner';
+import { reshareGrantDigest } from '../src/reshare';
 import {
   createPasskeyHandoff,
+  abortReshare,
+  commitReshare,
   health as serverHealth,
   passkeyCeremonyStatus,
   registerDeviceKey,
@@ -62,6 +72,42 @@ let pending:
     }
   | undefined;
 
+/**
+ * In-flight reshare state (`docs/adr/0007-distributed-reshare.md`).
+ *
+ * The server has staged its new share, but nothing local has changed. Once the user has saved the
+ * new recovery file we commit on the server and only then replace the vault. `committed` records
+ * that the server side is done, so a failure while storing locally can be retried without
+ * committing twice.
+ */
+let pendingReshare:
+  | {
+      shareA: Uint8Array;
+      publicKeyHex: string;
+      walletId: string;
+      password: string;
+      reshareIdHex: string;
+      committed: boolean;
+    }
+  | undefined;
+
+/**
+ * The reshare that is being set up. The passkey ceremony opens a tab, which closes the popup, so
+ * the popup cannot wait for the result and instead polls this. `ready` holds the new recovery
+ * share until the popup takes it, once.
+ */
+let reshareRun:
+  | { phase: 'working' }
+  | { phase: 'ready'; created: CreatedKey }
+  | { phase: 'failed'; error: string }
+  | undefined;
+
+/**
+ * Identifies the current reshare run. Cancelling bumps it, so a run that was cancelled while it
+ * was still working notices when it finishes and undoes itself instead of reviving.
+ */
+let reshareToken = 0;
+
 function toHex(bytes: Uint8Array): string {
   return [...bytes].map((b) => b.toString(16).padStart(2, '0')).join('');
 }
@@ -92,7 +138,12 @@ async function status(): Promise<Status> {
 
   // A wallet holding the recovery share was restored after a device loss.
   const recovered = (await vault.party()) === PARTY.recovery;
-  return { kind: 'unlocked', publicKeyHex, recovered };
+  return {
+    kind: 'unlocked',
+    publicKeyHex,
+    recovered,
+    reshareInProgress: pendingReshare !== undefined,
+  };
 }
 
 /**
@@ -225,15 +276,15 @@ async function passkeyStatus(ceremonyId: string) {
 }
 
 /**
- * Completes a server-origin passkey ceremony before a signing session is opened. A wallet
- * restored from a recovery file signs under the `recovery` policy, not `sign`.
+ * Completes a server-origin passkey ceremony before the operation it authorizes begins. A wallet
+ * restored from a recovery file signs under the `recovery` policy, and a reshare always does.
  */
-async function authorizeSign(
+async function authorizeWithPasskey(
   purpose: 'sign' | 'recovery',
-  signId: string,
+  operationId: string,
   digest: string,
 ): Promise<void> {
-  const { ceremonyId } = await startPasskey(purpose, signId, digest);
+  const { ceremonyId } = await startPasskey(purpose, operationId, digest);
   const startedAt = Date.now();
   try {
     for (;;) {
@@ -241,6 +292,9 @@ async function authorizeSign(
         throw new Error('The passkey ceremony timed out.');
       }
       await new Promise((resolve) => setTimeout(resolve, 500));
+      // An MV3 worker is stopped after 30 seconds without an extension API call, and the ceremony
+      // can take longer. A cheap call each round keeps it alive until the user answers.
+      await chrome.runtime.getPlatformInfo();
       const result = await passkeyStatus(ceremonyId);
       if (result.status === 'completed') return;
     }
@@ -311,7 +365,7 @@ async function sign(digestHex: string): Promise<Signed> {
 
   await loadWasm();
   const signId = crypto.getRandomValues(new Uint8Array(32));
-  await authorizeSign(
+  await authorizeWithPasskey(
     localParty === PARTY.recovery ? 'recovery' : 'sign',
     toHex(signId),
     digestHex,
@@ -345,6 +399,173 @@ async function signOffline(digestHex: string, recoveryShareHex: string): Promise
   } finally {
     wipe(recoveryShare);
   }
+}
+
+/**
+ * Reshares a wallet that was restored from a recovery file.
+ *
+ * Recovery leaves the wallet degraded: the extension holds share B, the same share the recovery
+ * file carries, and the lost share A stays valid. A reshare replaces all three shares while
+ * keeping the address (`docs/adr/0007-distributed-reshare.md`). The server stages its new share
+ * and nothing local changes until `confirmReshareSaved`.
+ *
+ * While it runs, this extension holds two new shares and can compute the key, exactly as it can
+ * at key creation. It is only offered on the device the user just restored onto.
+ */
+async function startReshare(password: string): Promise<ReshareProgress> {
+  requireUnlocked();
+  if ((await vault.party()) !== PARTY.recovery) {
+    throw new Error('Only a wallet restored from a recovery file needs a reshare.');
+  }
+  if (pendingReshare || reshareRun) {
+    throw new Error('A reshare is already in progress. Finish or cancel it.');
+  }
+  const walletId = await vault.walletId();
+  const publicKeyHex = await vault.publicKeyHex();
+  if (!walletId || !publicKeyHex) throw new Error('This wallet is not initialized.');
+
+  // Re-authenticate: this replaces the server's share, so an unlocked session is not enough.
+  const oldShare = await vault.unlock(password);
+  if (!oldShare) throw new Error('That password is not correct.');
+
+  reshareRun = { phase: 'working' };
+  reshareToken += 1;
+  const token = reshareToken;
+  void performReshare(password, walletId, publicKeyHex, oldShare, token).then(
+    (created) => {
+      if (token === reshareToken) reshareRun = { phase: 'ready', created };
+    },
+    (error: unknown) => {
+      if (token !== reshareToken) return;
+      reshareRun = {
+        phase: 'failed',
+        error: error instanceof Error ? error.message : String(error),
+      };
+    },
+  );
+  return { phase: 'working' };
+}
+
+async function performReshare(
+  password: string,
+  walletId: string,
+  publicKeyHex: string,
+  oldShare: Uint8Array,
+  token: number,
+): Promise<CreatedKey> {
+  try {
+    await loadWasm();
+    const reshareId = crypto.getRandomValues(new Uint8Array(32));
+    const reshareIdHex = toHex(reshareId);
+    await authorizeWithPasskey(
+      'recovery',
+      reshareIdHex,
+      await reshareGrantDigest(publicKeyHex, reshareIdHex),
+    );
+
+    const outcome = await runReshare(
+      await settings.serverUrl(),
+      walletId,
+      reshareId,
+      oldShare,
+      fromHex(publicKeyHex),
+    );
+
+    if (token !== reshareToken) {
+      // Cancelled while the server was working. Undo it rather than leave a share staged.
+      wipe(outcome.extensionShare);
+      wipe(outcome.recoveryShare);
+      await abortReshare(await settings.serverUrl(), walletId, reshareIdHex).catch(() => undefined);
+      throw new Error('The reshare was cancelled.');
+    }
+
+    pendingReshare = {
+      shareA: outcome.extensionShare,
+      publicKeyHex: outcome.publicKeyHex,
+      walletId,
+      password,
+      reshareIdHex,
+      committed: false,
+    };
+
+    // The new recovery share waits here for the popup to take it, and is left nowhere else.
+    const recoveryShareHex = toHex(outcome.recoveryShare);
+    wipe(outcome.recoveryShare);
+    return { publicKeyHex: outcome.publicKeyHex, walletId, recoveryShareHex };
+  } finally {
+    wipe(oldShare);
+  }
+}
+
+/** Reports how far the reshare has got. A failure is reported once and then forgotten. */
+function reshareProgress(): ReshareProgress {
+  if (!reshareRun) return { phase: 'idle' };
+  if (reshareRun.phase === 'failed') {
+    const { error } = reshareRun;
+    reshareRun = undefined;
+    return { phase: 'failed', error };
+  }
+  return { phase: reshareRun.phase };
+}
+
+/** Hands over the new recovery share, once. It is not kept afterwards. */
+function takeReshareRecovery(): CreatedKey {
+  if (reshareRun?.phase !== 'ready') throw new Error('There is no new recovery file to save.');
+  const { created } = reshareRun;
+  reshareRun = undefined;
+  return created;
+}
+
+/**
+ * The new recovery file is saved, so make the reshare real.
+ *
+ * Order matters. The server commits first, and only then is the vault replaced. If storing
+ * locally fails after the commit, the wallet is still recoverable from the new recovery file, and
+ * retrying this call skips the commit it already made.
+ */
+async function confirmReshareSaved(): Promise<Status> {
+  const reshare = pendingReshare;
+  if (!reshare) throw new Error('There is no reshare waiting to be finished.');
+
+  if (!reshare.committed) {
+    await commitReshare(await settings.serverUrl(), reshare.walletId, reshare.reshareIdHex);
+    reshare.committed = true;
+  }
+  await vault.store(
+    reshare.password,
+    reshare.shareA,
+    reshare.publicKeyHex,
+    reshare.walletId,
+    PARTY.extension,
+  );
+  wipe(unlockedShare);
+  unlockedShare = reshare.shareA;
+  pendingReshare = undefined;
+
+  return status();
+}
+
+/** Abandons a reshare that has not been committed. The current shares stay valid. */
+async function cancelReshare(): Promise<Status> {
+  const reshare = pendingReshare;
+  if (!reshare) {
+    // Nothing was staged yet, or the setup is still running. Forget any result it produces.
+    reshareToken += 1;
+    reshareRun = undefined;
+    return status();
+  }
+  if (reshare.committed) {
+    throw new Error(
+      'The new server share is already live. Finish storing the new share; the old one no longer works.',
+    );
+  }
+  // A failure to reach the server must not keep the user stuck. The staged share expires there.
+  await abortReshare(await settings.serverUrl(), reshare.walletId, reshare.reshareIdHex).catch(
+    () => undefined,
+  );
+  wipe(reshare.shareA);
+  pendingReshare = undefined;
+  return status();
 }
 
 /**
@@ -429,6 +650,16 @@ async function handle(request: Request): Promise<unknown> {
         request.publicKeyHex,
         request.recoveryShareHex,
       );
+    case 'startReshare':
+      return startReshare(request.password);
+    case 'reshareProgress':
+      return reshareProgress();
+    case 'takeReshareRecovery':
+      return takeReshareRecovery();
+    case 'confirmReshareSaved':
+      return confirmReshareSaved();
+    case 'cancelReshare':
+      return cancelReshare();
     case 'exportPrivateKey':
       return exportPrivateKey(request.password, request.recoveryShareHex);
     case 'readSettings':

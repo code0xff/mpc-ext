@@ -330,3 +330,29 @@ pub async fn abort(
         .await?;
     Ok(StatusCode::NO_CONTENT)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::grant_digest;
+
+    /// The extension computes the same digest in TypeScript ().
+    /// Both sides test against this vector, so a change to either one fails in CI.
+    #[test]
+    fn grant_digest_matches_the_extension_vector() {
+        let mut public_key = vec![0x02];
+        public_key.extend([0xaa; 32]);
+        assert_eq!(
+            grant_digest(&public_key, &[0xe1; 32]),
+            "7b145ea52b0d958bfd5ebdd538e7a90ac9a6d4f4876a19c58aef96ca69069531"
+        );
+    }
+
+    #[test]
+    fn grant_digest_binds_the_wallet_key_and_the_reshare_id() {
+        let key_a = [0x02; 33];
+        let key_b = [0x03; 33];
+        let id = [0x11; 32];
+        assert_ne!(grant_digest(&key_a, &id), grant_digest(&key_b, &id));
+        assert_ne!(grant_digest(&key_a, &id), grant_digest(&key_a, &[0x12; 32]));
+    }
+}

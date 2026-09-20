@@ -99,6 +99,93 @@ export async function runDkg(
   throw new Error('Key generation did not finish in the expected number of rounds.');
 }
 
+export interface ReshareOutcome {
+  /** The new share A', which the extension stores. */
+  extensionShare: Uint8Array;
+  /** The new share B', which the user keeps as a fresh recovery file. Never stored. */
+  recoveryShare: Uint8Array;
+  publicKeyHex: string;
+}
+
+/**
+ * Reshares a wallet restored from a recovery file (`docs/adr/0007-distributed-reshare.md`).
+ *
+ * The extension plays the surviving party B from the old recovery share and the joining party
+ * A', and the server plays the surviving party C. Out come fresh A', B' and C' for the same key.
+ * The server only **stages** C'; it takes effect on `commitReshare`, after the caller has
+ * confirmed the new recovery file is saved. Nothing is persisted here.
+ *
+ * While this runs the extension holds two new shares, so it can compute the key. That is the same
+ * exposure key creation has, which is why this only runs on the user's own device.
+ */
+export async function runReshare(
+  baseUrl: string,
+  walletId: string,
+  reshareId: Uint8Array,
+  oldRecoveryShare: Uint8Array,
+  publicKey: Uint8Array,
+): Promise<ReshareOutcome> {
+  const reshareHex = hex(reshareId);
+  const joiner = DkgSession.reshareJoiner(PARTY.extension, reshareId, publicKey);
+  const survivor = DkgSession.reshareSurvivor(
+    PARTY.recovery,
+    reshareId,
+    oldRecoveryShare,
+    PARTY.recovery,
+    PARTY.server,
+    publicKey,
+  );
+
+  try {
+    let inFlight: WireEnvelope[] = [
+      ...parse(joiner.outgoing),
+      ...parse(survivor.outgoing),
+      ...(await server.startReshare(baseUrl, walletId, reshareHex)),
+    ];
+
+    for (let round = 0; round < MAX_ROUNDS; round += 1) {
+      const next: WireEnvelope[] = [];
+
+      for (const [party, session] of [
+        [PARTY.extension, joiner],
+        [PARTY.recovery, survivor],
+      ] as const) {
+        if (session.finished) continue;
+        session.advance(JSON.stringify(inboxFor(party, inFlight)));
+        next.push(...parse(session.outgoing));
+      }
+
+      const forServer = inboxFor(PARTY.server, inFlight);
+      const result = await server.advanceReshare(baseUrl, walletId, reshareHex, forServer);
+
+      if (result.state === 'staged') {
+        if (!joiner.finished || !survivor.finished) {
+          throw new Error('The server finished the reshare before the local parties did.');
+        }
+        const publicKeyHex = hex(joiner.public_key);
+        if (publicKeyHex !== hex(publicKey) || publicKeyHex !== result.public_key) {
+          // The reshare must never change the address.
+          throw new Error('The reshare would have changed the wallet address, so it was stopped.');
+        }
+        return {
+          extensionShare: joiner.share,
+          recoveryShare: survivor.share,
+          publicKeyHex,
+        };
+      }
+
+      next.push(...result.envelopes);
+      inFlight = next;
+    }
+
+    throw new Error('The reshare did not finish in the expected number of rounds.');
+  } catch (error) {
+    // Leave the server as it was. A failure to say so must not hide the real error.
+    await server.abortReshare(baseUrl, walletId, reshareHex).catch(() => undefined);
+    throw error;
+  }
+}
+
 /**
  * Signs with the extension share and the server share — the everyday path.
  */
