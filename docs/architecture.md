@@ -67,5 +67,7 @@ memory, so termination locks the wallet automatically.
   erased from memory and storage.
 - No single party — extension, server or recovery file — can sign or reconstruct the key alone.
 - Protocol logic exists only in `mpc-core`.
-- The moments where reshare or export reconstruct a private key happen **on the user's device
-  only** (`recovery.md`).
+- The moments where export reconstructs a private key, and where a reshare lets the ceremony
+  device compute one, happen **on the user's device only** (`recovery.md`,
+  [adr/0007](adr/0007-distributed-reshare.md)). The server never sends its share anywhere, and
+  never holds two.

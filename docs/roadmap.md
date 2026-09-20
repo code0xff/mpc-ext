@@ -42,7 +42,8 @@
 - [x] The A+B emergency signing path for server outages (offline, no server involved)
 - [x] Recovery flow (B+C) — import the recovery file and sign again, verified in the smoke test
 - [x] Decide the distributed reshare design ([adr/0007](adr/0007-distributed-reshare.md))
-- [ ] Distributed reshare, so a lost share can actually be invalidated (`recovery.md`)
+- [x] Distributed reshare: `mpc-core` session, server staging and commit, extension flow (`recovery.md`)
+- [ ] Run the reshare against the real extension in the MV3 smoke test (needs passkey support in the test)
 - [x] Make the server URL configurable, for self-hosting
 - [x] Settle the server authentication design ([adr/0006](adr/0006-server-authentication.md))
 - [x] Decide the WebAuthn ceremony location: server-origin ceremony (ADR-0006)
@@ -63,7 +64,8 @@
 
 - [x] Recovery file import (restore in the popup, offline signing)
 - [x] Full private key export in the UI, with warnings (verified against the public key)
-- [ ] Re-export prompts after refresh or reshare
+- [x] Re-export after a reshare (the new recovery file is a mandatory step of the flow)
+- [ ] Re-export prompts after a refresh (no refresh UI exists yet)
 
 ## Phase 6 — hardening
 
