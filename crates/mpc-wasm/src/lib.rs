@@ -283,6 +283,43 @@ impl DkgSession {
         })
     }
 
+    /// Starts a reshare party that holds one of the two surviving shares.
+    ///
+    /// Everything after this call works like a DKG. The session fails at the end unless the new
+    /// public key equals `public_key`. Whoever runs two of the new parties can reconstruct the
+    /// key, so this belongs on the user's own device only
+    /// (`docs/adr/0007-distributed-reshare.md`).
+    #[wasm_bindgen(js_name = reshareSurvivor)]
+    pub fn reshare_survivor(
+        party: u8,
+        session_id: &[u8],
+        share: &[u8],
+        survivor_a: u8,
+        survivor_b: u8,
+        public_key: &[u8],
+    ) -> Result<DkgSession, JsValue> {
+        let session = session_from(session_id)?;
+        let expected = public_key_from(public_key)?;
+        let held = mpc_core::KeyShare::new(mpc_core::PartyId(party), share.to_vec());
+        let role = mpc_core::ReshareRole::Survivor {
+            share: &held,
+            survivors: [mpc_core::PartyId(survivor_a), mpc_core::PartyId(survivor_b)],
+        };
+        Self::reshare(party, &session, &role, &expected)
+    }
+
+    /// Starts a reshare party that takes a new share without having held one.
+    #[wasm_bindgen(js_name = reshareJoiner)]
+    pub fn reshare_joiner(
+        party: u8,
+        session_id: &[u8],
+        public_key: &[u8],
+    ) -> Result<DkgSession, JsValue> {
+        let session = session_from(session_id)?;
+        let expected = public_key_from(public_key)?;
+        Self::reshare(party, &session, &mpc_core::ReshareRole::Joiner, &expected)
+    }
+
     /// The envelopes this party wants to send, as JSON.
     #[wasm_bindgen(getter)]
     pub fn outgoing(&self) -> String {
@@ -328,6 +365,32 @@ impl DkgSession {
         }
         Ok(())
     }
+}
+
+impl DkgSession {
+    fn reshare(
+        party: u8,
+        session: &[u8; 32],
+        role: &mpc_core::ReshareRole<'_>,
+        expected: &mpc_core::PublicKey,
+    ) -> Result<DkgSession, JsValue> {
+        let (inner, outgoing) =
+            mpc_core::DkgParty::start_reshare(mpc_core::PartyId(party), session, role, expected)
+                .map_err(to_js)?;
+        Ok(Self {
+            inner: Some(inner),
+            outgoing: envelopes_to_json(&outgoing)?,
+            share: None,
+            public_key: None,
+        })
+    }
+}
+
+fn public_key_from(bytes: &[u8]) -> Result<mpc_core::PublicKey, JsValue> {
+    let key: [u8; 33] = bytes
+        .try_into()
+        .map_err(|_| JsValue::from_str("public key must be 33 bytes"))?;
+    Ok(mpc_core::PublicKey(key))
 }
 
 /// One party in a threshold signature.

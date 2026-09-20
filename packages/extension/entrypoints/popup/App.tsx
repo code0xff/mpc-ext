@@ -1,12 +1,12 @@
 import { useCallback, useEffect, useState } from 'react';
 
-import type { CreatedKey, Status, WasmHealth } from '../../src/messages';
+import type { CreatedKey, ReshareProgress, Status, WasmHealth } from '../../src/messages';
 import { send } from './api';
-import { MIN_PASSWORD_LENGTH } from '../../src/recoveryFile';
-import { downloadRecoveryFile } from './recoveryFile';
 import { ExportPanel } from './ExportPanel';
 import { OriginsPanel } from './OriginsPanel';
 import { RecoverPanel } from './RecoverPanel';
+import { RecoveryExportCard } from './RecoveryExportCard';
+import { ReshareCard } from './ReshareCard';
 import { ServerPanel } from './ServerPanel';
 import { SignPanel } from './SignPanel';
 
@@ -14,9 +14,8 @@ export function App() {
   const [status, setStatus] = useState<Status>();
   const [health, setHealth] = useState<WasmHealth>();
   const [created, setCreated] = useState<CreatedKey>();
-  const [downloaded, setDownloaded] = useState(false);
-  const [filePassword, setFilePassword] = useState('');
-  const [filePasswordAgain, setFilePasswordAgain] = useState('');
+  const [reshared, setReshared] = useState<CreatedKey>();
+  const [reshareWorking, setReshareWorking] = useState(false);
   const [serverUp, setServerUp] = useState<boolean>();
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string>();
@@ -38,6 +37,50 @@ export function App() {
       .then(setServerUp)
       .catch(() => setServerUp(false));
   }, [refresh]);
+
+  // The passkey ceremony opens a tab, which closes this popup, so a reshare cannot be awaited
+  // here. Follow it by polling, and pick it up again if the popup was closed and reopened.
+  useEffect(() => {
+    let stopped = false;
+    const check = async (): Promise<boolean> => {
+      const progress = await send<ReshareProgress>({ type: 'reshareProgress' });
+      if (stopped) return true;
+      if (progress.phase === 'ready') {
+        setReshared(await send<CreatedKey>({ type: 'takeReshareRecovery' }));
+        setReshareWorking(false);
+        await refresh();
+        return true;
+      }
+      if (progress.phase === 'failed') {
+        setError(progress.error ?? 'The reshare failed.');
+        setReshareWorking(false);
+        return true;
+      }
+      if (progress.phase === 'idle') {
+        setReshareWorking(false);
+        return true;
+      }
+      setReshareWorking(true);
+      return false;
+    };
+
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const tick = () => {
+      void check()
+        .then((done) => {
+          if (!done && !stopped) timer = setTimeout(tick, 1000);
+        })
+        .catch((cause: unknown) => {
+          setError(cause instanceof Error ? cause.message : String(cause));
+          setReshareWorking(false);
+        });
+    };
+    tick();
+    return () => {
+      stopped = true;
+      if (timer) clearTimeout(timer);
+    };
+  }, [refresh, reshareWorking]);
 
   function showError(cause: unknown) {
     setError(cause instanceof Error ? cause.message : String(cause));
@@ -84,9 +127,6 @@ export function App() {
           onCreate={(password) =>
             run(async () => {
               setCreated(await send<CreatedKey>({ type: 'createKey', password }));
-              setDownloaded(false);
-              setFilePassword('');
-              setFilePasswordAgain('');
               await refresh();
             })
           }
@@ -94,85 +134,32 @@ export function App() {
       )}
 
       {status?.kind === 'awaitingRecoveryExport' && created && (
-        <section className="callout">
-          <h2>Save your recovery file</h2>
-          <p>
-            This file can only be created <b>right now</b>. The extension does not store this share.
-            If you lose your device, or the server goes away, this file is the only way back.
-          </p>
-          <p className="warn">
-            Keep it <b>somewhere other than</b> this machine. Storing it alongside the extension
-            defeats the design. Files are easy to lose, so keep several copies.
-          </p>
-          <p>
-            The file is encrypted with a <b>recovery password</b> you choose now. You will need it
-            to restore or to sign without the server, so write it down separately. It can differ
-            from your wallet password.
-          </p>
-          <label htmlFor="recovery-password">Recovery password</label>
-          <input
-            id="recovery-password"
-            type="password"
-            value={filePassword}
-            autoComplete="new-password"
-            onChange={(event) => {
-              setFilePassword(event.target.value);
-              setDownloaded(false);
-            }}
-          />
-          <label htmlFor="recovery-password-again">Repeat recovery password</label>
-          <input
-            id="recovery-password-again"
-            type="password"
-            value={filePasswordAgain}
-            autoComplete="new-password"
-            onChange={(event) => setFilePasswordAgain(event.target.value)}
-          />
-          <button
-            type="button"
-            id="download-recovery"
-            disabled={
-              busy ||
-              filePassword.length < MIN_PASSWORD_LENGTH ||
-              filePassword !== filePasswordAgain
-            }
-            onClick={() =>
-              run(async () => {
-                await downloadRecoveryFile(created, filePassword);
-                setDownloaded(true);
-              })
-            }
-          >
-            Download recovery file (about 230 KB)
-          </button>
-          <button
-            type="button"
-            id="confirm-recovery"
-            className="secondary"
-            disabled={!downloaded || busy}
-            onClick={() =>
-              run(async () => {
-                setStatus(await send<Status>({ type: 'confirmRecoverySaved' }));
-                setCreated(undefined);
-              })
-            }
-          >
-            {downloaded ? 'I saved it — start using the wallet' : 'Download the file first'}
-          </button>
-          <button
-            type="button"
-            className="quiet"
-            disabled={busy}
-            onClick={() =>
-              run(async () => {
-                setStatus(await send<Status>({ type: 'cancelOnboarding' }));
-                setCreated(undefined);
-              })
-            }
-          >
-            Cancel and start over
-          </button>
-        </section>
+        <RecoveryExportCard
+          created={created}
+          heading="Save your recovery file"
+          intro={
+            <p>
+              This file can only be created <b>right now</b>. The extension does not store this
+              share. If you lose your device, or the server goes away, this file is the only way
+              back.
+            </p>
+          }
+          confirmLabel="I saved it — start using the wallet"
+          cancelLabel="Cancel and start over"
+          busy={busy}
+          onConfirm={() =>
+            run(async () => {
+              setStatus(await send<Status>({ type: 'confirmRecoverySaved' }));
+              setCreated(undefined);
+            })
+          }
+          onCancel={() =>
+            run(async () => {
+              setStatus(await send<Status>({ type: 'cancelOnboarding' }));
+              setCreated(undefined);
+            })
+          }
+        />
       )}
 
       {status?.kind === 'locked' && (
@@ -209,6 +196,54 @@ export function App() {
             Lock
           </button>
         </section>
+      )}
+
+      {status?.kind === 'unlocked' && status.recovered && reshared && (
+        <RecoveryExportCard
+          created={reshared}
+          heading="Save your new recovery file"
+          intro={
+            <p>
+              Your wallet now has three new shares and the same address. This is the only chance to
+              save the new recovery file. Your <b>old</b> file no longer belongs to a healthy
+              wallet, so destroy it once this one is safe.
+            </p>
+          }
+          confirmLabel="I saved it — finish"
+          cancelLabel="Cancel the reshare"
+          busy={busy}
+          onConfirm={() =>
+            run(async () => {
+              setStatus(await send<Status>({ type: 'confirmReshareSaved' }));
+              setReshared(undefined);
+            })
+          }
+          onCancel={() =>
+            run(async () => {
+              setStatus(await send<Status>({ type: 'cancelReshare' }));
+              setReshared(undefined);
+            })
+          }
+        />
+      )}
+      {status?.kind === 'unlocked' && status.recovered && !reshared && (
+        <ReshareCard
+          busy={busy}
+          working={reshareWorking}
+          interrupted={status.reshareInProgress}
+          onStart={(password) =>
+            run(async () => {
+              await send<ReshareProgress>({ type: 'startReshare', password });
+              setReshareWorking(true);
+            })
+          }
+          onCancel={() =>
+            run(async () => {
+              setStatus(await send<Status>({ type: 'cancelReshare' }));
+              setReshareWorking(false);
+            })
+          }
+        />
       )}
 
       {status?.kind === 'unlocked' && <SignPanel serverUp={serverUp} />}
