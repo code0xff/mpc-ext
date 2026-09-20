@@ -18,7 +18,9 @@ pub use backend::{
     dkg, ethereum_address, export_private_key, export_private_key_for, refresh, reshare, sign,
     verify,
 };
-pub use protocol::{DkgParty, Envelope, Progress, SignParty, SignProgress};
+pub use protocol::{
+    reshare_locally, DkgParty, Envelope, Progress, ReshareRole, SignParty, SignProgress,
+};
 pub use session::{Round, SessionId};
 pub use share::{KeyShare, PartyId, PublicKey};
 
