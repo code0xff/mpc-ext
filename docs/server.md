@@ -40,6 +40,8 @@ Tables:
 | `passkey_challenges`  | One-use, expiring ceremony state and operation binding                                 |
 | `browser_ceremonies`  | One-use handoff, browser session, and ceremony options/status                          |
 | `recovery_requests`   | Recovery requests, cooling-off expiry, status                                          |
+| `reshare_sessions`    | In-flight reshare sessions, sealed party state                                         |
+| `pending_reshares`    | The new share a finished reshare produced, waiting for its commit (one per wallet)     |
 | `audit_log`           | Append-only audit log                                                                  |
 
 Rules:
@@ -55,23 +57,27 @@ Rules:
 
 ## API
 
-| Endpoint                             | Purpose                                        |
-| ------------------------------------ | ---------------------------------------------- |
-| `POST /v1/dkg/session`               | Open a DKG session                             |
-| `POST /v1/dkg/round`                 | Exchange DKG round messages                    |
-| `POST /v1/sign/session`              | Open an everyday signing session               |
-| `POST /v1/sign/round`                | Exchange signing round messages                |
-| `POST /v1/passkeys/register/options` | Start a server-origin passkey registration     |
-| `POST /v1/passkeys/register/finish`  | Verify and persist a passkey registration      |
-| `POST /v1/passkeys/assert/options`   | Start an operation-bound assertion             |
-| `POST /v1/passkeys/assert/finish`    | Verify and consume an assertion                |
-| `POST /v1/passkeys/handoff`          | Create a one-use server-origin browser handoff |
-| `POST /v1/passkeys/ceremony/status`  | Read browser ceremony status                   |
-| `POST /auth/handoff`                 | Exchange a body token for an HttpOnly session  |
-| `GET  /auth`                         | Serve the fixed-origin WebAuthn ceremony page  |
-| `POST /v1/recovery/request`          | Start recovery (begins the cooling-off period) |
-| `POST /v1/recovery/sign`             | Join recovery-mode signing                     |
-| `GET  /v1/health`                    | Health check                                   |
+| Endpoint                             | Purpose                                         |
+| ------------------------------------ | ----------------------------------------------- |
+| `POST /v1/dkg/session`               | Open a DKG session                              |
+| `POST /v1/dkg/round`                 | Exchange DKG round messages                     |
+| `POST /v1/sign/session`              | Open an everyday signing session                |
+| `POST /v1/sign/round`                | Exchange signing round messages                 |
+| `POST /v1/passkeys/register/options` | Start a server-origin passkey registration      |
+| `POST /v1/passkeys/register/finish`  | Verify and persist a passkey registration       |
+| `POST /v1/passkeys/assert/options`   | Start an operation-bound assertion              |
+| `POST /v1/passkeys/assert/finish`    | Verify and consume an assertion                 |
+| `POST /v1/passkeys/handoff`          | Create a one-use server-origin browser handoff  |
+| `POST /v1/passkeys/ceremony/status`  | Read browser ceremony status                    |
+| `POST /auth/handoff`                 | Exchange a body token for an HttpOnly session   |
+| `GET  /auth`                         | Serve the fixed-origin WebAuthn ceremony page   |
+| `POST /v1/reshare/session`           | Open a reshare (device key + `recovery` grant)  |
+| `POST /v1/reshare/round`             | Advance a reshare; the last round stages C'     |
+| `POST /v1/reshare/commit`            | Swap the staged share in and delete the old one |
+| `POST /v1/reshare/abort`             | Drop a reshare; the current share stays live    |
+| `POST /v1/recovery/request`          | Start recovery (begins the cooling-off period)  |
+| `POST /v1/recovery/sign`             | Join recovery-mode signing                      |
+| `GET  /v1/health`                    | Health check                                    |
 
 - `GET /docs` serves Swagger UI and `GET /openapi.json` the spec.
 - The spec is generated from code (`make openapi`) and the generated
@@ -130,3 +136,21 @@ mitigations:
 - **Back up the SQLite file and the sealing key separately.** Keeping them together defeats the
   encryption.
 - Must remain self-hostable and not tied to a specific cloud.
+
+## Reshare
+
+[ADR-0007](adr/0007-distributed-reshare.md) describes the protocol. The server plays the
+surviving party at index 3. It contributes its Lagrange-weighted share, keeps the fresh one it
+receives, and never sends its old share anywhere.
+
+- **Authorization.** Opening a reshare needs the device key and consumes one `recovery` passkey
+  grant. The grant's `operation_id` is the reshare id and its digest is
+  `SHA-256("mpc-ext reshare v1" || public_key || reshare_id)`, so a grant cannot be reused for
+  another wallet or another session. Every later call needs the device key.
+- **Staging.** A finished reshare stores the new share in `pending_reshares` and leaves the live
+  share alone. Only `commit` replaces it, in one transaction that also writes the audit log. An
+  abort, an error in any round, or the 30-minute timeout leaves the previous share valid.
+- **Public key.** The session aborts unless the new key equals the stored one, so a commit can
+  never change a wallet's address.
+- **Deletion.** After a commit the old share exists nowhere on the server. That is what makes the
+  lost share useless against the server, so backups of the database must not outlive the commit.
