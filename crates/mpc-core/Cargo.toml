@@ -14,7 +14,7 @@ dkls23-secp256k1 = "=0.5.1"
 # Upstream was built against RustCrypto pre-releases and no longer compiles under default
 # resolution now that stable 0.14.1 exists. Pin the same versions upstream's Cargo.lock uses.
 # Drop these pins once upstream moves to stable (ADR-0004, mitigation 5).
-elliptic-curve = "=0.14.0-rc.29"
+elliptic-curve = "=0.14.0-rc.34"
 k256 = "=0.14.0-rc.8"
 rustcrypto-ff = "=0.14.0-rc.0"
 bincode = "1"
