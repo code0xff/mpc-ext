@@ -118,6 +118,8 @@ pub struct DkgParty {
     data: SessionData,
     fragments: BTreeMap<PartyId, k256::Scalar>,
     poly_point: Option<k256::Scalar>,
+    /// Set for a reshare: the public key the new shares must reproduce (ADR-0007).
+    expected_public_key: Option<Vec<u8>>,
     zero_kept_2to3: BTreeMap<PartyIndex, KeepInitZeroSharePhase2to3>,
     bip_kept_2to3: Option<UniqueKeepDerivationPhase2to3>,
     zero_kept_3to4: BTreeMap<PartyIndex, KeepInitZeroSharePhase3to4>,
@@ -142,24 +144,132 @@ fn to_party(index: PartyIndex) -> PartyId {
     PartyId(index.as_u8() - 1)
 }
 
+fn session_data(me: PartyId, session_id: &[u8; 32]) -> Result<SessionData> {
+    Ok(SessionData {
+        parameters: Parameters {
+            threshold: crate::THRESHOLD,
+            share_count: TOTAL_PARTIES,
+        },
+        party_index: to_index(me)?,
+        session_id: session_id.to_vec(),
+    })
+}
+
+/// What a party plays in a reshare (ADR-0007).
+#[derive(Debug)]
+pub enum ReshareRole<'a> {
+    /// Holds one of the two surviving shares.
+    Survivor {
+        /// The surviving share this party contributes.
+        share: &'a KeyShare,
+        /// Both survivors. They fix the Lagrange weights, so every survivor must pass the same
+        /// pair.
+        survivors: [PartyId; 2],
+    },
+    /// Takes a new share without having had one. Contributes nothing to the secret.
+    Joiner,
+}
+
+/// The Lagrange coefficient at zero for `me` over the survivor set, as a scalar.
+fn lagrange_at_zero(me: PartyId, survivors: [PartyId; 2]) -> Result<k256::Scalar> {
+    let [first, second] = survivors;
+    if first == second || first.0 >= TOTAL_PARTIES || second.0 >= TOTAL_PARTIES {
+        return Err(Error::Backend(
+            "survivors must be two distinct parties".into(),
+        ));
+    }
+    let other = if me == first {
+        second
+    } else if me == second {
+        first
+    } else {
+        return Err(Error::Backend("this party is not a survivor".into()));
+    };
+    let mine = k256::Scalar::from(u64::from(to_index(me)?.as_u8()));
+    let theirs = k256::Scalar::from(u64::from(to_index(other)?.as_u8()));
+    // Over {i, j}, the coefficient for i is j / (j - i).
+    let denominator = Option::<k256::Scalar>::from((theirs - mine).invert())
+        .ok_or_else(|| Error::Backend("lagrange coefficient is not invertible".into()))?;
+    Ok(theirs * denominator)
+}
+
+/// This survivor's polynomial `w + r·x`, evaluated at every party index, where `w` is its
+/// Lagrange-weighted share and `r` is fresh randomness.
+fn reshare_row(
+    me: PartyId,
+    share: &KeyShare,
+    survivors: [PartyId; 2],
+) -> Result<Vec<k256::Scalar>> {
+    use elliptic_curve::Field;
+
+    if share.party() != me {
+        return Err(Error::Backend(
+            "the share belongs to a different party".into(),
+        ));
+    }
+    let party = crate::backend::decode(share)?;
+    if party.party_index != to_index(me)? {
+        return Err(Error::Backend(
+            "the share belongs to a different party".into(),
+        ));
+    }
+
+    let constant = lagrange_at_zero(me, survivors)? * party.poly_point;
+    let mut rng = dkls23_secp256k1::utilities::rng::get_rng();
+    let slope = <k256::Scalar as Field>::random(&mut rng);
+
+    Ok((1..=TOTAL_PARTIES)
+        .map(|j| constant + slope * k256::Scalar::from(u64::from(j)))
+        .collect())
+}
+
 impl DkgParty {
     /// Opens a session and produces the round 1 messages.
     ///
     /// Every party must use the same `session_id`, and it must never be reused.
     pub fn start(me: PartyId, session_id: &[u8; 32]) -> Result<(Self, Vec<Envelope>)> {
-        let index = to_index(me)?;
-        let params = Parameters {
-            threshold: crate::THRESHOLD,
-            share_count: TOTAL_PARTIES,
-        };
-        let data = SessionData {
-            parameters: params,
-            party_index: index,
-            session_id: session_id.to_vec(),
-        };
-
+        let data = session_data(me, session_id)?;
         // Each party gets a different polynomial fragment, so these are point to point.
         let row = dkg::phase1::<Secp256k1>(&data);
+        Self::start_with(me, data, &row, None)
+    }
+
+    /// Opens a reshare session and produces the round 1 messages (ADR-0007).
+    ///
+    /// A reshare is a DKG whose polynomials are chosen so that the secret stays the same. Two
+    /// parties still hold a share (the *survivors*) and each contributes a polynomial whose
+    /// constant term is its Lagrange-weighted share. Everyone else (a *joiner*) contributes
+    /// nothing. The fresh shares that come out lie on a new polynomial with the old secret, and
+    /// the multiplication and zero-share setup between every pair is redone from scratch.
+    ///
+    /// The session fails at the end unless the new public key equals `expected`.
+    ///
+    /// # Danger
+    ///
+    /// Whoever plays two of the new parties can reconstruct the key from what they receive. That
+    /// is the same exposure DKG has for the extension, and it must only happen on the user's own
+    /// device (`docs/adr/0007-distributed-reshare.md`).
+    pub fn start_reshare(
+        me: PartyId,
+        session_id: &[u8; 32],
+        role: &ReshareRole<'_>,
+        expected: &PublicKey,
+    ) -> Result<(Self, Vec<Envelope>)> {
+        let data = session_data(me, session_id)?;
+        let row = match role {
+            ReshareRole::Joiner => vec![k256::Scalar::ZERO; TOTAL_PARTIES as usize],
+            ReshareRole::Survivor { share, survivors } => reshare_row(me, share, *survivors)?,
+        };
+        Self::start_with(me, data, &row, Some(expected.0.to_vec()))
+    }
+
+    fn start_with(
+        me: PartyId,
+        data: SessionData,
+        row: &[k256::Scalar],
+        expected_public_key: Option<Vec<u8>>,
+    ) -> Result<(Self, Vec<Envelope>)> {
+        let index = data.party_index;
         let mut outgoing = Vec::new();
         let mut fragments = BTreeMap::new();
         for (slot, fragment) in row.iter().enumerate() {
@@ -182,6 +292,7 @@ impl DkgParty {
                 data,
                 fragments,
                 poly_point: None,
+                expected_public_key,
                 zero_kept_2to3: BTreeMap::new(),
                 bip_kept_2to3: None,
                 zero_kept_3to4: BTreeMap::new(),
@@ -369,9 +480,18 @@ impl DkgParty {
         )
         .map_err(|e| Error::Backend(format!("dkg phase4: {e:?}")))?;
 
+        let public_key = crate::backend::public_key_of(&party)?;
+        if let Some(expected) = &self.expected_public_key {
+            if expected.as_slice() != public_key.0.as_slice() {
+                return Err(Error::Backend(
+                    "the reshare would change the wallet's public key".into(),
+                ));
+            }
+        }
+
         self.round = 4;
         Ok(Progress::Done {
-            public_key: crate::backend::public_key_of(&party)?,
+            public_key,
             share: KeyShare::new(self.me, crate::backend::encode(&party)?),
         })
     }
@@ -388,7 +508,42 @@ pub fn run_locally(session_id: &[u8; 32]) -> Result<(Vec<KeyShare>, PublicKey)> 
         parties.push(party);
         in_flight.extend(outgoing);
     }
+    drive_locally(parties, in_flight)
+}
 
+/// Reshares a key in one process from two surviving shares, giving all three parties fresh
+/// shares (ADR-0007).
+///
+/// A harness for tests. It holds every share in one place, which the real deployment never does
+/// for the server's.
+pub fn reshare_locally(
+    survivors: [&KeyShare; 2],
+    expected: &PublicKey,
+    session_id: &[u8; 32],
+) -> Result<(Vec<KeyShare>, PublicKey)> {
+    let ids = [survivors[0].party(), survivors[1].party()];
+    let mut parties = Vec::new();
+    let mut in_flight: Vec<Envelope> = Vec::new();
+    for id in (0..TOTAL_PARTIES).map(PartyId) {
+        let role = match survivors.iter().find(|share| share.party() == id) {
+            Some(share) => ReshareRole::Survivor {
+                share,
+                survivors: ids,
+            },
+            None => ReshareRole::Joiner,
+        };
+        let (party, outgoing) = DkgParty::start_reshare(id, session_id, &role, expected)?;
+        parties.push(party);
+        in_flight.extend(outgoing);
+    }
+    drive_locally(parties, in_flight)
+}
+
+/// Runs the parties round by round until every one of them finishes.
+fn drive_locally(
+    mut parties: Vec<DkgParty>,
+    mut in_flight: Vec<Envelope>,
+) -> Result<(Vec<KeyShare>, PublicKey)> {
     let mut shares = Vec::new();
     let mut public_key: Option<PublicKey> = None;
 
