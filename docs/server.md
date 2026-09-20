@@ -154,3 +154,14 @@ receives, and never sends its old share anywhere.
   never change a wallet's address.
 - **Deletion.** After a commit the old share exists nowhere on the server. That is what makes the
   lost share useless against the server, so backups of the database must not outlive the commit.
+
+## Passkey algorithms
+
+Registration offers **ES256 (P-256) only**, and rejects any other key type. Assertions are
+verified against P-256 keys, so anything else would register successfully and then never be able to
+authorize a signature. The library's default list starts with EdDSA, which an authenticator that
+supports it picks first. `registration_options` is the single place the list is built, and a test
+checks that it stays `[-7]`.
+
+Rejected assertions all reach the client as `authentication failed`. The server logs the reason at
+`warn` (never the credential), and that log is the only place an operator can see it.

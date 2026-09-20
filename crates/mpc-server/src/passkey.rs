@@ -17,8 +17,8 @@ use webauthn_rp::request::auth::{
     SignatureCounterEnforcement,
 };
 use webauthn_rp::request::register::{
-    PublicKeyCredentialCreationOptions, PublicKeyCredentialUserEntity, RegistrationServerState,
-    UserHandle64,
+    CoseAlgorithmIdentifier, CoseAlgorithmIdentifiers, PublicKeyCredentialCreationOptions,
+    PublicKeyCredentialUserEntity, RegistrationServerState, UserHandle64,
 };
 use webauthn_rp::request::{AsciiDomain, DomainOrigin, RpId};
 use webauthn_rp::response::register::{CompressedPubKey, DynamicState, StaticState};
@@ -173,7 +173,12 @@ pub struct HandoffRequest {
     pub wallet_id: String,
     /// `register`, `sign`, or `recovery`.
     pub purpose: String,
+    // Left out when absent. The device proof covers the serialized body, and the extension's
+    // `JSON.stringify` drops `undefined`, so a `null` here would change the bytes the server
+    // checks against what the client signed (a `register` handoff has neither field).
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub operation_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub digest: Option<String>,
 }
 
@@ -368,7 +373,14 @@ pub async fn registration_options(
     let rp_id = state.passkey.rp_id()?;
     let user_handle = UserHandle64::new();
     let user = PublicKeyCredentialUserEntity::from(&user_handle);
-    let options = PublicKeyCredentialCreationOptions::passkey(&rp_id, user, Vec::new());
+    let mut options = PublicKeyCredentialCreationOptions::passkey(&rp_id, user, Vec::new());
+    // Assertions are verified against P-256 keys only (`verify_assertion`), so offer nothing else.
+    // The library's default list starts with EdDSA, and an authenticator that supports it picks it
+    // first: registration then succeeds and every later assertion is refused, stranding the user.
+    options.pub_key_cred_params = CoseAlgorithmIdentifiers::ALL
+        .remove(CoseAlgorithmIdentifier::Eddsa)
+        .remove(CoseAlgorithmIdentifier::Es384)
+        .remove(CoseAlgorithmIdentifier::Rs256);
     let (server_state, client_state) = options
         .start_ceremony()
         .map_err(|_| Error::Protocol("passkey ceremony could not start".into()))?;
@@ -440,6 +452,14 @@ pub async fn verify_registration(
         .map_err(|_| Error::Protocol("passkey registration verification failed".into()))?;
     if !credential.dynamic_state().user_verified {
         return Err(Error::Authentication);
+    }
+    // Defence in depth for the list offered above: never store a key the assertion path would
+    // refuse, because the wallet could then never be authorized again.
+    if !matches!(
+        credential.static_state().credential_public_key,
+        webauthn_rp::response::register::UncompressedPubKey::P256(_)
+    ) {
+        return Err(Error::Protocol("only P-256 passkeys are supported".into()));
     }
     let stored = StoredCredential::from_registered(&credential)?;
     let encoded = serde_json::to_vec(&stored)
@@ -520,6 +540,7 @@ pub async fn verify_assertion(
         .take_passkey_challenge_with_binding(&request.challenge_id, &request.wallet_id, "assert")
         .await?
     else {
+        tracing::warn!("passkey assertion has no live challenge for this wallet");
         return Err(Error::Authentication);
     };
     let expected_binding = serde_json::to_vec(&AssertionBinding {
@@ -529,6 +550,7 @@ pub async fn verify_assertion(
     })
     .map_err(|_| Error::Authentication)?;
     if binding != expected_binding {
+        tracing::warn!("passkey assertion does not match the operation it was issued for");
         return Err(Error::Authentication);
     }
     let server_state = DiscoverableAuthenticationServerState::decode(&server_state)
@@ -556,6 +578,7 @@ pub async fn verify_assertion(
     let id = authentication.raw_id();
     let id_bytes = id.encode().map_err(|_| Error::Authentication)?;
     if id_bytes != stored.id.as_slice() {
+        tracing::warn!("passkey assertion is for a different credential than the registered one");
         return Err(Error::Authentication);
     }
     let static_state = stored.static_state()?;
@@ -563,15 +586,21 @@ pub async fn verify_assertion(
         static_state.credential_public_key,
         CompressedPubKey::P256(_)
     ) {
+        tracing::warn!("the registered passkey is not a P-256 key");
         return Err(Error::Authentication);
     }
     let dynamic_state = stored.dynamic_state()?;
     if dynamic_state.sign_count != database_sign_count {
+        tracing::warn!("stored passkey counter and its database copy disagree");
         return Err(Error::Authentication);
     }
     let mut credential =
-        AuthenticatedCredential::new(id, &user_handle, static_state, dynamic_state)
-            .map_err(|_| Error::Authentication)?;
+        AuthenticatedCredential::new(id, &user_handle, static_state, dynamic_state).map_err(
+            |error| {
+                tracing::warn!(?error, "the stored passkey could not be reassembled");
+                Error::Authentication
+            },
+        )?;
     server_state
         .verify(
             &rp_id,
@@ -579,8 +608,14 @@ pub async fn verify_assertion(
             &mut credential,
             &verification_options,
         )
-        .map_err(|_| Error::Authentication)?;
+        .map_err(|error| {
+            // Only the kind of failure, never the credential. Every rejection reaches the client
+            // as the same "authentication failed", so this is the one place an operator can see why.
+            tracing::warn!(?error, "passkey assertion failed verification");
+            Error::Authentication
+        })?;
     if !credential.dynamic_state().user_verified {
+        tracing::warn!("the assertion did not carry user verification");
         return Err(Error::Authentication);
     }
     stored.dynamic_state = credential
@@ -631,44 +666,10 @@ pub async fn register_options(
     )
     .await?;
     validate_wallet_id(&request.wallet_id)?;
-    if state
-        .store
-        .passkey_credential(&request.wallet_id)
-        .await?
-        .is_some()
-    {
-        return Err(Error::Protocol("a passkey is already registered".into()).into());
-    }
-
-    let rp_id = state.passkey.rp_id()?;
-    let user_handle = UserHandle64::new();
-    let user = PublicKeyCredentialUserEntity::from(&user_handle);
-    let options = PublicKeyCredentialCreationOptions::passkey(&rp_id, user, Vec::new());
-    let (server_state, client_state) = options
-        .start_ceremony()
-        .map_err(|_| Error::Protocol("passkey ceremony could not start".into()))?;
-    let server_state = server_state
-        .encode()
-        .map_err(|_| Error::Protocol("passkey ceremony state could not be stored".into()))?;
-    let options = serde_json::to_value(&client_state)
-        .map_err(|_| Error::Protocol("passkey options could not be encoded".into()))?;
-    let challenge_id = uuid::Uuid::new_v4().to_string();
-    state
-        .store
-        .put_passkey_challenge_with_binding(
-            &challenge_id,
-            &request.wallet_id,
-            "register",
-            &server_state,
-            b"register",
-            CEREMONY_TTL_SECONDS,
-        )
-        .await?;
-
-    Ok(Json(RegisterOptionsResponse {
-        challenge_id,
-        options,
-    }))
+    // One code path for the options, so the algorithms offered cannot drift between callers.
+    Ok(Json(
+        registration_options(&state, &request.wallet_id).await?,
+    ))
 }
 
 /// Verifies and stores a new passkey credential.
