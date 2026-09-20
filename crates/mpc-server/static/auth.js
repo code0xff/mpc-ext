@@ -69,8 +69,20 @@
     return body;
   }
 
+  // What the authenticator is about to approve. The prompt alone says nothing, and another page
+  // can send a browser here, so the user is told before being asked. Set as text, never as HTML.
+  const PURPOSES = {
+    register: 'You are registering a passkey for your wallet.',
+    sign: 'You are approving a signature from your wallet.',
+    recovery:
+      'You are approving a recovery operation for your wallet, such as restoring it on a new ' +
+      'device. If you did not just start one, close this tab and do not approve.',
+  };
+
   async function run() {
     const ceremony = await json('/auth/session');
+    document.getElementById('purpose').textContent =
+      PURPOSES[ceremony.purpose] || 'You are approving an operation on your wallet.';
     const publicKey = credentialOptions(ceremony.options);
     const credential =
       ceremony.kind === 'register'
