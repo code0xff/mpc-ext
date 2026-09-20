@@ -5,6 +5,11 @@
  * inside a service worker are different questions, so we load the extension into a real Chrome
  * and drive the protocol from inside the worker.
  *
+ * Every signature and every reshare needs a passkey assertion, and the assertion happens in a
+ * browser tab the extension opens on the server's origin. Headless Chrome has no authenticator,
+ * so this script attaches a CDP virtual authenticator to each tab as it appears and carries the
+ * registered credential from tab to tab (a virtual authenticator lives and dies with its tab).
+ *
  * Run with: pnpm -C packages/extension smoke
  */
 import { spawn } from 'node:child_process';
@@ -98,6 +103,58 @@ if (!serverUp) {
 }
 console.log('server ready on 127.0.0.1:8080');
 
+/**
+ * The passkey credentials seen so far, by id. A virtual authenticator disappears with its tab,
+ * and the extension opens a fresh tab for every ceremony, so the registered credential and its
+ * latest signature counter have to be handed to each new authenticator. Without the counter the
+ * server would see it go backwards and reject the assertion as a cloned key.
+ */
+const credentials = new Map();
+
+async function attachAuthenticator(target) {
+  if (target.type() !== 'page') return;
+
+  // The server registers passkeys with `enforceCredentialProtectionPolicy`, and Chrome's virtual
+  // authenticator cannot satisfy that at any setting (checked with a standalone probe: it fails
+  // with credProtect enforced and works without). Hardware keys support the extension. So drop
+  // only that flag in this test browser, and leave the server's policy alone.
+  const page = await target.page();
+  await page?.evaluateOnNewDocument(() => {
+    const create = navigator.credentials.create.bind(navigator.credentials);
+    navigator.credentials.create = (options) => {
+      if (options?.publicKey?.extensions) {
+        delete options.publicKey.extensions.enforceCredentialProtectionPolicy;
+      }
+      return create(options);
+    };
+  });
+
+  const session = await target.createCDPSession();
+  await session.send('WebAuthn.enable', { enableUI: false });
+  const { authenticatorId } = await session.send('WebAuthn.addVirtualAuthenticator', {
+    options: {
+      protocol: 'ctap2',
+      transport: 'internal',
+      hasResidentKey: true,
+      hasUserVerification: true,
+      isUserVerified: true,
+      automaticPresenceSimulation: true,
+    },
+  });
+  for (const credential of credentials.values()) {
+    await session.send('WebAuthn.addCredential', { authenticatorId, credential });
+  }
+  const remember = ({ credential }) => {
+    if (process.env.SMOKE_DEBUG)
+      console.log(
+        `[credential] ${credential.credentialId.slice(0, 12)}… count=${credential.signCount}`,
+      );
+    credentials.set(credential.credentialId, credential);
+  };
+  session.on('WebAuthn.credentialAdded', remember);
+  session.on('WebAuthn.credentialAsserted', remember);
+}
+
 const profile = await mkdtemp(join(tmpdir(), 'mpc-ext-smoke-'));
 const browser = await puppeteer.launch({
   executablePath: CHROME,
@@ -115,6 +172,50 @@ const browser = await puppeteer.launch({
     // sandbox cannot start. The runner is a throwaway VM and the page under test is our own.
     ...(process.env.CI ? ['--no-sandbox'] : []),
   ],
+});
+
+const DEBUG = Boolean(process.env.SMOKE_DEBUG);
+
+browser.on('targetcreated', (target) => {
+  if (DEBUG) console.log(`[target] ${target.type()} ${target.url()}`);
+  attachAuthenticator(target)
+    .then(() => {
+      if (DEBUG && target.type() === 'page') console.log('[authenticator] attached');
+    })
+    .catch((cause) => {
+      console.error('could not attach a virtual authenticator:', cause.message);
+    });
+  if (DEBUG && target.type() === 'page') {
+    target
+      .page()
+      .then((page) => {
+        page?.on('console', (message) => console.log(`[page console] ${message.text()}`));
+        page?.on('framenavigated', (frame) => {
+          if (frame !== page.mainFrame()) return;
+          console.log(`[navigated] ${frame.url()}`);
+          if (frame.url().includes('/auth')) {
+            setTimeout(async () => {
+              const text = await page.evaluate(() => document.body.innerText).catch(() => '(gone)');
+              console.log(`[auth page after 4s] ${text.replace(/\s+/g, ' ')}`);
+            }, 4000);
+          }
+        });
+        page?.on('response', (response) => {
+          if (response.url().endsWith('/auth/session')) {
+            response
+              .text()
+              .then((text) => console.log(`[options] ${text}`))
+              .catch(() => undefined);
+          }
+          if (response.url().includes('/auth')) {
+            console.log(
+              `[http] ${response.status()} ${response.request().method()} ${response.url()}`,
+            );
+          }
+        });
+      })
+      .catch(() => undefined);
+  }
 });
 
 let failed = false;
@@ -152,6 +253,21 @@ try {
       return response.value;
     };
 
+    const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+    const within = async (what, ms, check) => {
+      const deadline = Date.now() + ms;
+      for (;;) {
+        const value = await check();
+        if (value) return value;
+        if (Date.now() > deadline) throw new Error(`timed out waiting for ${what}`);
+        await sleep(300);
+      }
+    };
+
+    // WebAuthn needs a domain as its relying-party id, and an IP address is not one. The server
+    // defaults to `localhost`, so point the extension at that name rather than 127.0.0.1.
+    await expect({ type: 'setServerUrl', serverUrl: 'http://localhost:8080' }, 'server url');
+
     const health = await expect({ type: 'wasmHealth' }, 'wasm load');
 
     const before = await expect({ type: 'status' }, 'initial status');
@@ -172,6 +288,17 @@ try {
 
     const confirmed = await expect({ type: 'confirmRecoverySaved' }, 'recovery confirmation');
     if (confirmed.kind !== 'unlocked') throw new Error(`expected unlocked: ${confirmed.kind}`);
+
+    // Register the passkey that every later signature will need. The extension opens a tab on
+    // the server's origin, and the virtual authenticator answers the ceremony there.
+    const registration = await expect({ type: 'registerPasskey' }, 'passkey registration');
+    await within('the passkey registration', 30_000, async () => {
+      const ceremony = await expect(
+        { type: 'passkeyStatus', ceremonyId: registration.ceremonyId },
+        'passkey registration status',
+      );
+      return ceremony.status === 'completed';
+    });
 
     // Lock, reject the wrong password, then unlock with the right one.
     const locked = await expect({ type: 'lock' }, 'lock');
@@ -218,8 +345,17 @@ try {
     // Device-loss recovery: wipe this install, then restore from the recovery file and sign
     // again with the recovery share plus the server (docs/recovery.md, scenario 1).
     await chrome.storage.local.clear();
+    // The device key lives in IndexedDB, which a lost device takes with it.
+    await new Promise((resolve, reject) => {
+      const request = indexedDB.deleteDatabase('mpc-ext-device');
+      request.onsuccess = () => resolve();
+      request.onerror = () => reject(request.error);
+    });
     const wiped = await expect({ type: 'status' }, 'status after wipe');
     if (wiped.kind !== 'uninitialized') throw new Error(`expected a clean install: ${wiped.kind}`);
+    // A fresh install starts on the default address, which is an IP and so cannot be a WebAuthn
+    // origin. A user restoring onto a new device points it at their server again.
+    await expect({ type: 'setServerUrl', serverUrl: 'http://localhost:8080' }, 'server url');
 
     const restored = await expect(
       {
@@ -243,7 +379,64 @@ try {
     if (afterRecovery.via !== 'server') throw new Error('expected the server path');
     if (afterRecovery.signatureHex.length !== 130) throw new Error('a signature is 65 bytes');
 
+    // Restore full protection: reshare the restored wallet (docs/adr/0007-distributed-reshare.md).
+    const reshareStarted = performance.now();
+    await expect({ type: 'startReshare', password: 'a whole new horse' }, 'reshare start');
+    await within('the reshare', 120_000, async () => {
+      const progress = await expect({ type: 'reshareProgress' }, 'reshare progress');
+      if (progress.phase === 'failed') throw new Error(`the reshare failed: ${progress.error}`);
+      return progress.phase === 'ready';
+    });
+    const reshareMs = Math.round(performance.now() - reshareStarted);
+    const fresh = await expect({ type: 'takeReshareRecovery' }, 'new recovery share');
+    if (fresh.publicKeyHex !== created.publicKeyHex)
+      throw new Error('the reshare changed the address');
+    if (fresh.recoveryShareHex === created.recoveryShareHex) {
+      throw new Error('the new recovery share is the old one');
+    }
+    // The new recovery share is handed over once and not kept.
+    const again = await send({ type: 'takeReshareRecovery' });
+    if (again.ok) throw new Error('the new recovery share was handed over twice');
+
+    // Nothing local has changed until the new recovery file is confirmed saved.
+    const pendingStatus = await expect({ type: 'status' }, 'status mid-reshare');
+    if (!pendingStatus.recovered || !pendingStatus.reshareInProgress) {
+      throw new Error('the wallet changed before the reshare was confirmed');
+    }
+    const storedMidReshare = await chrome.storage.local.get('vault');
+    if (storedMidReshare.vault.party !== 1) throw new Error('the vault changed before confirming');
+
+    const healthy = await expect({ type: 'confirmReshareSaved' }, 'reshare confirmation');
+    if (healthy.kind !== 'unlocked') throw new Error(`expected unlocked: ${healthy.kind}`);
+    if (healthy.recovered || healthy.reshareInProgress) {
+      throw new Error('a reshared wallet must no longer be marked as restored');
+    }
+    if (healthy.publicKeyHex !== created.publicKeyHex) throw new Error('the address changed');
+    const storedAfter = await chrome.storage.local.get('vault');
+    if (storedAfter.vault.party !== 0) throw new Error('the vault did not take the new share A');
+
+    // Everyday signing with the new A' and the new C'.
+    const afterReshare = await expect({ type: 'sign', digestHex }, 'signing after the reshare');
+    if (afterReshare.via !== 'server') throw new Error('expected the server path');
+    if (afterReshare.signatureHex.length !== 130) throw new Error('a signature is 65 bytes');
+
+    // The new recovery file works with the new A'...
+    const newFile = await expect(
+      { type: 'signOffline', digestHex, recoveryShareHex: fresh.recoveryShareHex },
+      'offline signing with the new recovery file',
+    );
+    if (newFile.signatureHex.length !== 130) throw new Error('a signature is 65 bytes');
+
+    // ...and the old one no longer does. It belongs to a different polynomial.
+    const staleFile = await send({
+      type: 'signOffline',
+      digestHex,
+      recoveryShareHex: created.recoveryShareHex,
+    });
+    if (staleFile.ok) throw new Error('the old recovery file still signs with the new A');
+
     return {
+      reshareMs,
       config: health.config,
       loadMs: health.loadMs,
       dkgMs,
@@ -260,14 +453,16 @@ try {
   console.log(`DKG (3 parties)  ${result.dkgMs} ms   (extension + server)`);
   console.log(`signing          ${result.signMs} ms   (extension + server)`);
   console.log(`signing restored ${result.recoveredSignMs} ms   (recovery file + server)`);
+  console.log(`reshare          ${result.reshareMs} ms   (passkey approval included)`);
   console.log(`public key       ${result.publicKey.slice(0, 24)}…`);
   console.log(`recovery share   ${result.recoveryShareBytes} bytes`);
 
   if (result.config !== '2-of-3') throw new Error(`unexpected threshold: ${result.config}`);
   if (result.publicKey.length !== 66) throw new Error('the public key is not 33 bytes');
   console.log(
-    '\nPASS: DKG with the server, atomic onboarding, everyday signing, the offline fallback,\n' +
-      '      lock/unlock and device-loss recovery all work inside the MV3 service worker.',
+    '\nPASS: DKG with the server, atomic onboarding, passkey-approved signing, the offline\n' +
+      '      fallback, lock/unlock, device-loss recovery and the distributed reshare all work\n' +
+      '      inside the MV3 service worker.',
   );
 } catch (error) {
   failed = true;

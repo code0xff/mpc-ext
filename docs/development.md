@@ -31,8 +31,21 @@ A pnpm workspace and a cargo workspace share the repository root.
 | `make check`   | fmt check + lint + typecheck + test (**the commit gate**) |
 
 The extension also has `pnpm -C packages/extension smoke`, which loads the built extension into
-Chrome for Testing and exercises DKG, onboarding and unlocking inside the real MV3 service
-worker.
+Chrome for Testing and drives it against a real server inside the real MV3 service worker: DKG,
+onboarding, passkey registration, passkey-approved signing, the offline fallback, device-loss
+recovery and the distributed reshare.
+
+Every signature and reshare needs a passkey assertion in a tab on the server's origin. The script
+attaches a CDP virtual authenticator to each tab as it opens and carries the registered credential
+(with its signature counter) from tab to tab, since an authenticator lives only as long as its tab.
+Three details are worth knowing when it breaks:
+
+- The extension has to talk to `http://localhost:8080`, not `127.0.0.1`. WebAuthn needs a domain
+  as its relying-party id, and the server's default is `localhost`.
+- Chrome's virtual authenticator cannot satisfy `enforceCredentialProtectionPolicy` at any
+  setting. The script removes only that flag in the test browser. The server still enforces it.
+- `SMOKE_DEBUG=1` prints each tab, HTTP status and credential event, which is usually enough to
+  find where a ceremony stopped.
 
 ## Quality tooling
 
