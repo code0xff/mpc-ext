@@ -565,6 +565,191 @@ impl Store {
         Ok(Some((round, Sealed { ciphertext, nonce })))
     }
 
+    /// Stores the state of an in-flight reshare session.
+    pub async fn put_reshare_session(
+        &self,
+        reshare_id: &str,
+        wallet_id: &str,
+        round: i64,
+        state: &Sealed,
+        ttl_seconds: i64,
+    ) -> Result<(), Error> {
+        let now = time::OffsetDateTime::now_utc();
+        let expires = now + time::Duration::seconds(ttl_seconds);
+        sqlx::query(
+            "INSERT INTO reshare_sessions
+               (reshare_id, wallet_id, round, state, nonce, created_at, expires_at)
+             VALUES (?, ?, ?, ?, ?, ?, ?)
+             ON CONFLICT(reshare_id) DO UPDATE SET round = excluded.round,
+                                                   state = excluded.state,
+                                                   nonce = excluded.nonce",
+        )
+        .bind(reshare_id)
+        .bind(wallet_id)
+        .bind(round)
+        .bind(&state.ciphertext)
+        .bind(&state.nonce)
+        .bind(format_time(now))
+        .bind(format_time(expires))
+        .execute(&self.pool)
+        .await?;
+        Ok(())
+    }
+
+    /// Reads a reshare session that has not expired. A session belonging to another wallet reads
+    /// as absent.
+    pub async fn take_reshare_session(
+        &self,
+        reshare_id: &str,
+        wallet_id: &str,
+    ) -> Result<Option<Sealed>, Error> {
+        let row: Option<(Vec<u8>, Vec<u8>, String)> = sqlx::query_as(
+            "SELECT state, nonce, expires_at FROM reshare_sessions
+             WHERE reshare_id = ? AND wallet_id = ?",
+        )
+        .bind(reshare_id)
+        .bind(wallet_id)
+        .fetch_optional(&self.pool)
+        .await?;
+
+        let Some((ciphertext, nonce, expires_at)) = row else {
+            return Ok(None);
+        };
+        if expires_at.as_str() < timestamp().as_str() {
+            sqlx::query("DELETE FROM reshare_sessions WHERE reshare_id = ?")
+                .bind(reshare_id)
+                .execute(&self.pool)
+                .await?;
+            return Ok(None);
+        }
+        Ok(Some(Sealed { ciphertext, nonce }))
+    }
+
+    /// Stages the finished reshare's share and drops its session, in one transaction.
+    ///
+    /// The live share is untouched until [`Self::commit_reshare`]. A wallet keeps at most one
+    /// staged share, so a newer reshare replaces an older one.
+    pub async fn stage_reshare(
+        &self,
+        reshare_id: &str,
+        wallet_id: &str,
+        share: &Sealed,
+        ttl_seconds: i64,
+    ) -> Result<(), Error> {
+        let now = time::OffsetDateTime::now_utc();
+        let expires = now + time::Duration::seconds(ttl_seconds);
+        let mut tx = self.pool.begin().await?;
+
+        sqlx::query("DELETE FROM reshare_sessions WHERE reshare_id = ?")
+            .bind(reshare_id)
+            .execute(&mut *tx)
+            .await?;
+        sqlx::query(
+            "INSERT INTO pending_reshares
+               (wallet_id, reshare_id, ciphertext, nonce, created_at, expires_at)
+             VALUES (?, ?, ?, ?, ?, ?)
+             ON CONFLICT(wallet_id) DO UPDATE SET reshare_id = excluded.reshare_id,
+                                                  ciphertext = excluded.ciphertext,
+                                                  nonce = excluded.nonce,
+                                                  created_at = excluded.created_at,
+                                                  expires_at = excluded.expires_at",
+        )
+        .bind(wallet_id)
+        .bind(reshare_id)
+        .bind(&share.ciphertext)
+        .bind(&share.nonce)
+        .bind(format_time(now))
+        .bind(format_time(expires))
+        .execute(&mut *tx)
+        .await?;
+        sqlx::query(
+            "INSERT INTO audit_log (wallet_id, event, created_at) VALUES (?, 'reshare.staged', ?)",
+        )
+        .bind(wallet_id)
+        .bind(format_time(now))
+        .execute(&mut *tx)
+        .await?;
+
+        tx.commit().await?;
+        Ok(())
+    }
+
+    /// Swaps the staged share in for the live one and deletes the old share.
+    ///
+    /// Returns `false` when nothing matching is staged, or when it has expired. The public key
+    /// is untouched: the reshare already refused to change it.
+    pub async fn commit_reshare(&self, reshare_id: &str, wallet_id: &str) -> Result<bool, Error> {
+        let now = timestamp();
+        let mut tx = self.pool.begin().await?;
+
+        let staged: Option<(Vec<u8>, Vec<u8>)> = sqlx::query_as(
+            "SELECT ciphertext, nonce FROM pending_reshares
+             WHERE wallet_id = ? AND reshare_id = ? AND expires_at >= ?",
+        )
+        .bind(wallet_id)
+        .bind(reshare_id)
+        .bind(&now)
+        .fetch_optional(&mut *tx)
+        .await?;
+        let Some((ciphertext, nonce)) = staged else {
+            return Ok(false);
+        };
+
+        let updated = sqlx::query(
+            "UPDATE key_shares SET ciphertext = ?, nonce = ?, refreshed_at = ?
+             WHERE wallet_id = ?",
+        )
+        .bind(&ciphertext)
+        .bind(&nonce)
+        .bind(&now)
+        .bind(wallet_id)
+        .execute(&mut *tx)
+        .await?;
+        if updated.rows_affected() != 1 {
+            return Ok(false);
+        }
+
+        sqlx::query("DELETE FROM pending_reshares WHERE wallet_id = ?")
+            .bind(wallet_id)
+            .execute(&mut *tx)
+            .await?;
+        sqlx::query(
+            "INSERT INTO audit_log (wallet_id, event, created_at)
+             VALUES (?, 'reshare.committed', ?)",
+        )
+        .bind(wallet_id)
+        .bind(&now)
+        .execute(&mut *tx)
+        .await?;
+
+        tx.commit().await?;
+        Ok(true)
+    }
+
+    /// Drops a reshare's session and its staged share, leaving the live share as it was.
+    pub async fn abort_reshare(&self, reshare_id: &str, wallet_id: &str) -> Result<(), Error> {
+        let mut tx = self.pool.begin().await?;
+        sqlx::query("DELETE FROM reshare_sessions WHERE reshare_id = ? AND wallet_id = ?")
+            .bind(reshare_id)
+            .bind(wallet_id)
+            .execute(&mut *tx)
+            .await?;
+        sqlx::query("DELETE FROM pending_reshares WHERE reshare_id = ? AND wallet_id = ?")
+            .bind(reshare_id)
+            .bind(wallet_id)
+            .execute(&mut *tx)
+            .await?;
+        sqlx::query(
+            "INSERT INTO audit_log (wallet_id, event, created_at) VALUES (?, 'reshare.aborted', ?)",
+        )
+        .bind(wallet_id)
+        .bind(timestamp())
+        .execute(&mut *tx)
+        .await?;
+        tx.commit().await?;
+        Ok(())
+    }
+
     /// Loads the sealed share for a wallet.
     pub async fn key_share(&self, wallet_id: &str) -> Result<Option<Sealed>, Error> {
         let row: Option<(Vec<u8>, Vec<u8>)> =
@@ -666,7 +851,7 @@ impl Store {
         Ok(row.map(|(pk,)| pk))
     }
 
-    /// Sweeps expired sessions of both kinds.
+    /// Sweeps expired sessions and staged reshares.
     pub async fn sweep_expired(&self) -> Result<u64, Error> {
         let now = format_time(time::OffsetDateTime::now_utc());
         let dkg = sqlx::query("DELETE FROM dkg_sessions WHERE expires_at < ?")
@@ -677,7 +862,18 @@ impl Store {
             .bind(&now)
             .execute(&self.pool)
             .await?;
-        Ok(dkg.rows_affected() + signing.rows_affected())
+        let reshare = sqlx::query("DELETE FROM reshare_sessions WHERE expires_at < ?")
+            .bind(&now)
+            .execute(&self.pool)
+            .await?;
+        let staged = sqlx::query("DELETE FROM pending_reshares WHERE expires_at < ?")
+            .bind(&now)
+            .execute(&self.pool)
+            .await?;
+        Ok(dkg.rows_affected()
+            + signing.rows_affected()
+            + reshare.rows_affected()
+            + staged.rows_affected())
     }
 }
 

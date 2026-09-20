@@ -10,7 +10,10 @@
 use axum::body::Body;
 use axum::http::{HeaderMap, HeaderValue, Request, StatusCode};
 use base64::Engine;
-use mpc_core::{DkgParty, Envelope, PartyId, Progress, SignParty, SignProgress};
+use mpc_core::{
+    DkgParty, Envelope, KeyShare, PartyId, Progress, PublicKey, ReshareRole, SignParty,
+    SignProgress,
+};
 use mpc_server::api::{router, AppState};
 use mpc_server::crypto::SealingKey;
 use mpc_server::passkey::PasskeyConfig;
@@ -590,6 +593,21 @@ fn device_headers(path: &str, body: &Value, key: &SigningKey, nonce: &str) -> He
                 .expect("status body should deserialize"),
         )
         .expect("status body should serialize"),
+        "/v1/reshare/session" => serde_json::to_string(
+            &serde_json::from_value::<mpc_server::reshare::StartReshare>(body.clone())
+                .expect("reshare start body should deserialize"),
+        )
+        .expect("reshare start body should serialize"),
+        "/v1/reshare/round" => serde_json::to_string(
+            &serde_json::from_value::<mpc_server::reshare::AdvanceReshare>(body.clone())
+                .expect("reshare round body should deserialize"),
+        )
+        .expect("reshare round body should serialize"),
+        "/v1/reshare/commit" | "/v1/reshare/abort" => serde_json::to_string(
+            &serde_json::from_value::<mpc_server::reshare::FinishReshare>(body.clone())
+                .expect("reshare finish body should deserialize"),
+        )
+        .expect("reshare finish body should serialize"),
         _ => serde_json::to_string(body).expect("body should serialize"),
     };
     let message = format!("POST\n{path}\n{timestamp}\n{nonce}\n{serialized}");
@@ -1172,4 +1190,542 @@ async fn signing_requires_a_matching_one_use_passkey_authorization() {
         StatusCode::OK,
         "a recovery grant must open a recovery session"
     );
+}
+
+// ---------------------------------------------------------------------------------------------
+// Distributed reshare (docs/adr/0007-distributed-reshare.md)
+// ---------------------------------------------------------------------------------------------
+
+const RESHARE_WALLET: &str = "wallet-reshare";
+
+fn hex_of(bytes: &[u8]) -> String {
+    bytes.iter().map(|b| format!("{b:02x}")).collect()
+}
+
+fn public_key_from_hex(value: &str) -> PublicKey {
+    let mut key = [0u8; 33];
+    for (i, slot) in key.iter_mut().enumerate() {
+        *slot = u8::from_str_radix(&value[i * 2..i * 2 + 2], 16).expect("hex");
+    }
+    PublicKey(key)
+}
+
+/// A server, its store, and a registered device key for `wallet`.
+async fn wallet_with_device(wallet: &str) -> (axum::Router, Store, SigningKey) {
+    let store = Store::open("sqlite::memory:")
+        .await
+        .expect("the database should open");
+    let app = router(AppState {
+        store: store.clone(),
+        sealing: SealingKey::new(&[42u8; 32]),
+        passkey: PasskeyConfig::new("localhost", "http://localhost:8080")
+            .expect("test passkey configuration"),
+    });
+    let device_key = SigningKey::from_bytes((&[7u8; 32]).into()).expect("device key");
+    let registered = hex_of(
+        device_key
+            .verifying_key()
+            .to_encoded_point(false)
+            .as_bytes(),
+    );
+    let (status, _) = post(
+        &app,
+        "/v1/device-key",
+        json!({ "wallet_id": wallet, "public_key": registered }),
+    )
+    .await;
+    assert_eq!(status, StatusCode::NO_CONTENT);
+    (app, store, device_key)
+}
+
+/// Authorizes one reshare the way a verified passkey assertion would.
+async fn grant_reshare(store: &Store, wallet: &str, public_key: &PublicKey, id: &[u8; 32]) {
+    store
+        .put_passkey_authorization(
+            wallet,
+            "recovery",
+            &hex_of(id),
+            &mpc_server::reshare::grant_digest(&public_key.0, id),
+            300,
+        )
+        .await
+        .expect("the reshare authorization should be stored");
+}
+
+/// Posts with a device proof. Every call gets its own nonce, so a retry with the same arguments
+/// is judged on its merits and not rejected as a replay.
+async fn reshare_post(
+    app: &axum::Router,
+    device_key: &SigningKey,
+    path: &str,
+    body: Value,
+    nonce: &str,
+) -> (StatusCode, Value) {
+    static CALLS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+    let unique = format!(
+        "{nonce}-{}",
+        CALLS.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+    );
+    post_with_headers(
+        app,
+        path,
+        body.clone(),
+        device_headers(path, &body, device_key, &unique),
+    )
+    .await
+}
+
+/// Runs the extension's side of a reshare (the survivor B and the joiner A') against the server.
+///
+/// Returns the HTTP status of the last request and, when the server staged its share, the new
+/// extension shares `[A', B']` with the public key the server reported.
+async fn run_reshare(
+    app: &axum::Router,
+    device_key: &SigningKey,
+    wallet: &str,
+    id: [u8; 32],
+    old_b: &KeyShare,
+    public_key: &PublicKey,
+) -> (StatusCode, Option<(Vec<KeyShare>, String)>) {
+    let id_hex = hex_of(&id);
+    let survivors = [PartyId(1), PartyId(SERVER_PARTY)];
+    let (joiner, mut in_flight) =
+        DkgParty::start_reshare(PartyId(0), &id, &ReshareRole::Joiner, public_key)
+            .expect("the joiner should start");
+    let (survivor, more) = DkgParty::start_reshare(
+        PartyId(1),
+        &id,
+        &ReshareRole::Survivor {
+            share: old_b,
+            survivors,
+        },
+        public_key,
+    )
+    .expect("the survivor should start");
+    in_flight.extend(more);
+    let mut local = vec![joiner, survivor];
+
+    let (status, body) = reshare_post(
+        app,
+        device_key,
+        "/v1/reshare/session",
+        json!({ "wallet_id": wallet, "reshare_id": id_hex }),
+        &format!("{id_hex}-start"),
+    )
+    .await;
+    if status != StatusCode::OK {
+        return (status, None);
+    }
+    for envelope in body["envelopes"].as_array().expect("envelopes") {
+        in_flight.push(from_wire(envelope));
+    }
+
+    let mut shares = Vec::new();
+    for round in 0..4 {
+        let mut next: Vec<Envelope> = Vec::new();
+        for party in &mut local {
+            let me = party.party();
+            let inbox: Vec<Envelope> = in_flight
+                .iter()
+                .filter(|e| e.from != me && e.to.is_none_or(|to| to == me))
+                .cloned()
+                .collect();
+            match party.advance(&inbox).expect("the round should advance") {
+                Progress::Send(outgoing) => next.extend(outgoing),
+                Progress::Done { share, .. } => shares.push(share),
+            }
+        }
+
+        let for_server: Vec<Value> = in_flight
+            .iter()
+            .filter(|e| {
+                e.from != PartyId(SERVER_PARTY) && e.to.is_none_or(|to| to.0 == SERVER_PARTY)
+            })
+            .map(to_wire)
+            .collect();
+        let (status, body) = reshare_post(
+            app,
+            device_key,
+            "/v1/reshare/round",
+            json!({ "wallet_id": wallet, "reshare_id": id_hex, "envelopes": for_server }),
+            &format!("{id_hex}-round-{round}"),
+        )
+        .await;
+        if status != StatusCode::OK {
+            return (status, None);
+        }
+        match body["state"].as_str().expect("state") {
+            "inProgress" => {
+                for envelope in body["envelopes"].as_array().expect("envelopes") {
+                    next.push(from_wire(envelope));
+                }
+            }
+            "staged" => {
+                let reported = body["public_key"].as_str().expect("public_key").to_string();
+                shares.sort_by_key(|s| s.party().0);
+                return (status, Some((shares, reported)));
+            }
+            other => panic!("unknown state: {other}"),
+        }
+        in_flight = next;
+    }
+    panic!("the reshare did not finish in four rounds");
+}
+
+/// Signs with the extension's party-0 share and the server over HTTP, and checks the signature
+/// against `public_key`.
+async fn sign_and_check(
+    app: &axum::Router,
+    store: &Store,
+    device_key: &SigningKey,
+    wallet: &str,
+    extension_share: &KeyShare,
+    public_key: &PublicKey,
+    tag: u8,
+) -> bool {
+    let sign_id = [tag; 32];
+    let sign_hex = hex_of(&sign_id);
+    let digest = [tag ^ 0x55; 32];
+    let digest_hex = hex_of(&digest);
+    store
+        .put_passkey_authorization(wallet, "sign", &sign_hex, &digest_hex, 300)
+        .await
+        .expect("the signing authorization should be stored");
+
+    let (mut extension, mut in_flight) =
+        SignParty::start(extension_share, PartyId(SERVER_PARTY), &sign_id, &digest)
+            .expect("the party should start");
+    let start = json!({
+        "wallet_id": wallet, "sign_id": sign_hex, "digest": digest_hex, "counterparty": 0,
+    });
+    let (status, body) = reshare_post(
+        app,
+        device_key,
+        "/v1/sign/session",
+        start,
+        &format!("sign-{tag}-start"),
+    )
+    .await;
+    if status != StatusCode::OK {
+        return false;
+    }
+    for envelope in body["envelopes"].as_array().expect("envelopes") {
+        in_flight.push(from_wire(envelope));
+    }
+
+    for round in 0..4 {
+        let mut next: Vec<Envelope> = Vec::new();
+        let inbox: Vec<Envelope> = in_flight
+            .iter()
+            .filter(|e| e.from != PartyId(0) && e.to.is_none_or(|to| to == PartyId(0)))
+            .cloned()
+            .collect();
+        // Shares from different epochs fail the multiplication check and abort here. That is a
+        // failed signature, not a broken test.
+        match extension.advance(&inbox) {
+            Ok(SignProgress::Send(outgoing)) => next.extend(outgoing),
+            Ok(SignProgress::Done(_)) => {}
+            Err(_) => return false,
+        }
+
+        let for_server: Vec<Value> = in_flight
+            .iter()
+            .filter(|e| {
+                e.from != PartyId(SERVER_PARTY) && e.to.is_none_or(|to| to.0 == SERVER_PARTY)
+            })
+            .map(to_wire)
+            .collect();
+        let (status, body) = reshare_post(
+            app,
+            device_key,
+            "/v1/sign/round",
+            json!({ "wallet_id": wallet, "sign_id": sign_hex, "envelopes": for_server }),
+            &format!("sign-{tag}-round-{round}"),
+        )
+        .await;
+        if status != StatusCode::OK {
+            return false;
+        }
+        match body["state"].as_str().expect("state") {
+            "inProgress" => {
+                for envelope in body["envelopes"].as_array().expect("envelopes") {
+                    next.push(from_wire(envelope));
+                }
+            }
+            "completed" => {
+                let raw = body["signature"].as_str().expect("signature");
+                let mut bytes = [0u8; 65];
+                for (i, slot) in bytes.iter_mut().enumerate() {
+                    *slot = u8::from_str_radix(&raw[i * 2..i * 2 + 2], 16).expect("hex");
+                }
+                let mut r = [0u8; 32];
+                let mut s = [0u8; 32];
+                r.copy_from_slice(&bytes[..32]);
+                s.copy_from_slice(&bytes[32..64]);
+                return mpc_core::verify(
+                    public_key,
+                    &digest,
+                    &mpc_core::Signature {
+                        r,
+                        s,
+                        recovery_id: bytes[64],
+                    },
+                )
+                .unwrap_or(false);
+            }
+            other => panic!("unknown state: {other}"),
+        }
+        in_flight = next;
+    }
+    false
+}
+
+#[tokio::test]
+async fn reshare_replaces_the_servers_share_and_keeps_the_key() {
+    let (app, store, device_key) = wallet_with_device(RESHARE_WALLET).await;
+    let (old, public_key_hex) = provision(&app, RESHARE_WALLET, 0xd1).await;
+    let public_key = public_key_from_hex(&public_key_hex);
+    let before = store
+        .key_share(RESHARE_WALLET)
+        .await
+        .expect("the share should load")
+        .expect("the wallet should have a share");
+
+    // A is lost. B survives in the recovery file, and C is on the server.
+    let id = [0xe1u8; 32];
+    grant_reshare(&store, RESHARE_WALLET, &public_key, &id).await;
+    let (status, outcome) =
+        run_reshare(&app, &device_key, RESHARE_WALLET, id, &old[1], &public_key).await;
+    assert_eq!(status, StatusCode::OK);
+    let (fresh, reported) = outcome.expect("the server should stage its share");
+    assert_eq!(reported, public_key_hex, "the address must not change");
+
+    // Staged is not live: the previous share is untouched until the commit.
+    let staged = store
+        .key_share(RESHARE_WALLET)
+        .await
+        .expect("the share should load")
+        .expect("the wallet should have a share");
+    assert_eq!(
+        staged.ciphertext, before.ciphertext,
+        "staging must not touch the live share"
+    );
+
+    let commit = json!({ "wallet_id": RESHARE_WALLET, "reshare_id": hex_of(&id) });
+    let (status, body) = reshare_post(
+        &app,
+        &device_key,
+        "/v1/reshare/commit",
+        commit.clone(),
+        "commit-1",
+    )
+    .await;
+    assert_eq!(
+        status,
+        StatusCode::NO_CONTENT,
+        "the commit should succeed: {body}"
+    );
+
+    let after = store
+        .key_share(RESHARE_WALLET)
+        .await
+        .expect("the share should load")
+        .expect("the wallet should have a share");
+    assert_ne!(
+        after.ciphertext, before.ciphertext,
+        "the server must hold a new share"
+    );
+    assert_eq!(
+        store
+            .public_key(RESHARE_WALLET)
+            .await
+            .expect("key")
+            .expect("key"),
+        public_key.0.to_vec(),
+        "the stored public key must not change"
+    );
+
+    // A second commit finds nothing staged.
+    let (status, _) =
+        reshare_post(&app, &device_key, "/v1/reshare/commit", commit, "commit-2").await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
+
+    // The fresh A' signs with the fresh C, and the signature verifies under the same key.
+    assert!(
+        sign_and_check(
+            &app,
+            &store,
+            &device_key,
+            RESHARE_WALLET,
+            &fresh[0],
+            &public_key,
+            0x31
+        )
+        .await,
+        "the new extension share and the new server share must sign"
+    );
+
+    // The lost A no longer signs with the server's new share.
+    assert!(
+        !sign_and_check(
+            &app,
+            &store,
+            &device_key,
+            RESHARE_WALLET,
+            &old[0],
+            &public_key,
+            0x32
+        )
+        .await,
+        "the lost share must not sign with the new server share"
+    );
+}
+
+#[tokio::test]
+async fn aborting_a_reshare_leaves_the_previous_share_live() {
+    let (app, store, device_key) = wallet_with_device(RESHARE_WALLET).await;
+    let (old, public_key_hex) = provision(&app, RESHARE_WALLET, 0xd2).await;
+    let public_key = public_key_from_hex(&public_key_hex);
+    let before = store
+        .key_share(RESHARE_WALLET)
+        .await
+        .expect("the share should load")
+        .expect("the wallet should have a share");
+
+    let id = [0xe2u8; 32];
+    grant_reshare(&store, RESHARE_WALLET, &public_key, &id).await;
+    let (status, outcome) =
+        run_reshare(&app, &device_key, RESHARE_WALLET, id, &old[1], &public_key).await;
+    assert_eq!(status, StatusCode::OK);
+    assert!(outcome.is_some());
+
+    let finish = json!({ "wallet_id": RESHARE_WALLET, "reshare_id": hex_of(&id) });
+    let (status, _) = reshare_post(
+        &app,
+        &device_key,
+        "/v1/reshare/abort",
+        finish.clone(),
+        "abort-1",
+    )
+    .await;
+    assert_eq!(status, StatusCode::NO_CONTENT);
+
+    // Nothing is left to commit, and the old shares still work together.
+    let (status, _) = reshare_post(
+        &app,
+        &device_key,
+        "/v1/reshare/commit",
+        finish,
+        "commit-after-abort",
+    )
+    .await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
+    let after = store
+        .key_share(RESHARE_WALLET)
+        .await
+        .expect("the share should load")
+        .expect("the wallet should have a share");
+    assert_eq!(
+        after.ciphertext, before.ciphertext,
+        "an abort must not touch the live share"
+    );
+    assert!(
+        sign_and_check(
+            &app,
+            &store,
+            &device_key,
+            RESHARE_WALLET,
+            &old[0],
+            &public_key,
+            0x33
+        )
+        .await,
+        "the previous shares must still sign"
+    );
+}
+
+#[tokio::test]
+async fn reshare_needs_a_matching_one_use_recovery_grant() {
+    let (app, store, device_key) = wallet_with_device(RESHARE_WALLET).await;
+    let (old, public_key_hex) = provision(&app, RESHARE_WALLET, 0xd3).await;
+    let public_key = public_key_from_hex(&public_key_hex);
+    let id = [0xe3u8; 32];
+
+    // No grant at all.
+    let (status, outcome) =
+        run_reshare(&app, &device_key, RESHARE_WALLET, id, &old[1], &public_key).await;
+    assert_eq!(
+        status,
+        StatusCode::UNAUTHORIZED,
+        "a reshare without a grant must fail"
+    );
+    assert!(outcome.is_none());
+
+    // A `sign` grant is the wrong policy.
+    store
+        .put_passkey_authorization(
+            RESHARE_WALLET,
+            "sign",
+            &hex_of(&id),
+            &mpc_server::reshare::grant_digest(&public_key.0, &id),
+            300,
+        )
+        .await
+        .expect("the grant should be stored");
+    let (status, _) =
+        run_reshare(&app, &device_key, RESHARE_WALLET, id, &old[1], &public_key).await;
+    assert_eq!(
+        status,
+        StatusCode::UNAUTHORIZED,
+        "a sign grant must not start a reshare"
+    );
+
+    // A recovery grant bound to another digest does not fit.
+    store
+        .put_passkey_authorization(
+            RESHARE_WALLET,
+            "recovery",
+            &hex_of(&id),
+            &"00".repeat(32),
+            300,
+        )
+        .await
+        .expect("the grant should be stored");
+    let (status, _) =
+        run_reshare(&app, &device_key, RESHARE_WALLET, id, &old[1], &public_key).await;
+    assert_eq!(
+        status,
+        StatusCode::UNAUTHORIZED,
+        "a grant for another digest must fail"
+    );
+
+    // The right grant works once and only once.
+    grant_reshare(&store, RESHARE_WALLET, &public_key, &id).await;
+    let (status, outcome) =
+        run_reshare(&app, &device_key, RESHARE_WALLET, id, &old[1], &public_key).await;
+    assert_eq!(status, StatusCode::OK);
+    assert!(outcome.is_some());
+    let (status, _) =
+        run_reshare(&app, &device_key, RESHARE_WALLET, id, &old[1], &public_key).await;
+    assert_eq!(status, StatusCode::UNAUTHORIZED, "a grant must be one-use");
+}
+
+#[tokio::test]
+async fn reshare_endpoints_need_the_device_key() {
+    let (app, _store, _device_key) = wallet_with_device(RESHARE_WALLET).await;
+    for path in [
+        "/v1/reshare/session",
+        "/v1/reshare/round",
+        "/v1/reshare/commit",
+        "/v1/reshare/abort",
+    ] {
+        let body =
+            json!({ "wallet_id": RESHARE_WALLET, "reshare_id": "ab".repeat(32), "envelopes": [] });
+        let (status, _) = post(&app, path, body).await;
+        assert_eq!(
+            status,
+            StatusCode::UNAUTHORIZED,
+            "{path} must require a device proof"
+        );
+    }
 }

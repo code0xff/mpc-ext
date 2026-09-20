@@ -297,6 +297,129 @@
         }
       }
     },
+    "/v1/reshare/abort": {
+      "post": {
+        "tags": [
+          "crate::reshare"
+        ],
+        "summary": "Abandons a reshare. The previous share stays live.",
+        "operationId": "abort",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/FinishReshare"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "204": {
+            "description": "the reshare was dropped"
+          }
+        }
+      }
+    },
+    "/v1/reshare/commit": {
+      "post": {
+        "tags": [
+          "crate::reshare"
+        ],
+        "summary": "Makes the staged share the live one and deletes the old share.",
+        "description": "Call it only after the user has saved the new recovery file. Until then an abort, or a\ntimeout, leaves the previous share in place.",
+        "operationId": "commit",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/FinishReshare"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "204": {
+            "description": "the new share is live"
+          },
+          "404": {
+            "description": "nothing staged, or it expired"
+          }
+        }
+      }
+    },
+    "/v1/reshare/round": {
+      "post": {
+        "tags": [
+          "crate::reshare"
+        ],
+        "summary": "Advances the reshare by one round. The last round stages the new share.",
+        "operationId": "advance",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AdvanceReshare"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "round advanced, or new share staged",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AdvancedReshare"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "unknown or expired session"
+          }
+        }
+      }
+    },
+    "/v1/reshare/session": {
+      "post": {
+        "tags": [
+          "crate::reshare"
+        ],
+        "summary": "Opens a reshare session and returns the server's round 1 envelopes.",
+        "operationId": "start",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/StartReshare"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "session opened",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StartedReshare"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "missing device proof or passkey grant"
+          },
+          "404": {
+            "description": "no key for this wallet"
+          }
+        }
+      }
+    },
     "/v1/sign/round": {
       "post": {
         "tags": [],
@@ -391,6 +514,32 @@
           }
         }
       },
+      "AdvanceReshare": {
+        "type": "object",
+        "description": "A request to advance a reshare round.",
+        "required": [
+          "wallet_id",
+          "reshare_id",
+          "envelopes"
+        ],
+        "properties": {
+          "envelopes": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/WireEnvelope"
+            },
+            "description": "The envelopes being delivered to the server."
+          },
+          "reshare_id": {
+            "type": "string",
+            "description": "The reshare id, 64 hex characters."
+          },
+          "wallet_id": {
+            "type": "string",
+            "description": "The wallet identifier."
+          }
+        }
+      },
       "AdvanceSign": {
         "type": "object",
         "description": "A request to advance a signing round.",
@@ -464,6 +613,54 @@
           }
         ],
         "description": "The response to advancing a DKG round."
+      },
+      "AdvancedReshare": {
+        "oneOf": [
+          {
+            "type": "object",
+            "description": "Still running. Deliver the envelopes and call again.",
+            "required": [
+              "envelopes",
+              "state"
+            ],
+            "properties": {
+              "envelopes": {
+                "type": "array",
+                "items": {
+                  "$ref": "#/components/schemas/WireEnvelope"
+                },
+                "description": "The envelopes the server sends."
+              },
+              "state": {
+                "type": "string",
+                "enum": [
+                  "inProgress"
+                ]
+              }
+            }
+          },
+          {
+            "type": "object",
+            "description": "The reshare finished and the new share is staged. It takes effect on commit.",
+            "required": [
+              "public_key",
+              "state"
+            ],
+            "properties": {
+              "public_key": {
+                "type": "string",
+                "description": "The SEC1 compressed public key, hex-encoded. It equals the wallet's existing key."
+              },
+              "state": {
+                "type": "string",
+                "enum": [
+                  "staged"
+                ]
+              }
+            }
+          }
+        ],
+        "description": "The response to advancing a reshare round."
       },
       "AdvancedSign": {
         "oneOf": [
@@ -651,6 +848,24 @@
           }
         }
       },
+      "FinishReshare": {
+        "type": "object",
+        "description": "A request to commit or abort a reshare.",
+        "required": [
+          "wallet_id",
+          "reshare_id"
+        ],
+        "properties": {
+          "reshare_id": {
+            "type": "string",
+            "description": "The reshare id, 64 hex characters."
+          },
+          "wallet_id": {
+            "type": "string",
+            "description": "The wallet identifier."
+          }
+        }
+      },
       "HandoffRequest": {
         "type": "object",
         "description": "Starts a server-origin browser ceremony after device-key authentication.",
@@ -804,6 +1019,24 @@
           }
         }
       },
+      "StartReshare": {
+        "type": "object",
+        "description": "A request to open a reshare session.",
+        "required": [
+          "wallet_id",
+          "reshare_id"
+        ],
+        "properties": {
+          "reshare_id": {
+            "type": "string",
+            "description": "A unique id for this reshare, 64 hex characters. Never reuse one."
+          },
+          "wallet_id": {
+            "type": "string",
+            "description": "The wallet identifier."
+          }
+        }
+      },
       "StartSign": {
         "type": "object",
         "description": "A request to open a signing session.",
@@ -837,6 +1070,22 @@
       "StartedDkg": {
         "type": "object",
         "description": "The response to opening a DKG session.",
+        "required": [
+          "envelopes"
+        ],
+        "properties": {
+          "envelopes": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/WireEnvelope"
+            },
+            "description": "The round 1 envelopes the server sends."
+          }
+        }
+      },
+      "StartedReshare": {
+        "type": "object",
+        "description": "The response to opening a reshare session.",
         "required": [
           "envelopes"
         ],
