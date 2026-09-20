@@ -1,15 +1,8 @@
 import { useCallback, useRef, useState } from 'react';
 
 import type { Status } from '../../src/messages';
+import { openRecoveryFile } from '../../src/recoveryFile';
 import { send } from './api';
-
-interface RecoveryFileContents {
-  kind?: string;
-  formatVersion?: number;
-  walletId?: string;
-  publicKey?: string;
-  share?: string;
-}
 
 /**
  * Restoring a wallet from a recovery file after a device loss.
@@ -19,25 +12,21 @@ interface RecoveryFileContents {
  */
 export function RecoverPanel({ onRecovered }: { onRecovered: (status: Status) => void }) {
   const [password, setPassword] = useState('');
-  const [file, setFile] = useState<RecoveryFileContents>();
+  const [file, setFile] = useState<unknown>();
+  const [filePassword, setFilePassword] = useState('');
   const [fileName, setFileName] = useState('');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string>();
   const input = useRef<HTMLInputElement>(null);
 
-  const ready = password.length >= 8 && file?.share && file.walletId && file.publicKey;
+  const ready = password.length >= 8 && file !== undefined && filePassword;
 
   const load = useCallback(async (picked: File) => {
     setError(undefined);
     try {
-      const parsed = JSON.parse(await picked.text()) as RecoveryFileContents;
-      if (parsed.kind !== 'mpc-ext-recovery') {
+      const parsed: unknown = JSON.parse(await picked.text());
+      if ((parsed as { kind?: string } | null)?.kind !== 'mpc-ext-recovery') {
         throw new Error('That does not look like an mpc-ext recovery file.');
-      }
-      if (!parsed.walletId) {
-        throw new Error(
-          'This recovery file predates wallet ids, so it cannot be restored automatically.',
-        );
       }
       setFile(parsed);
       setFileName(picked.name);
@@ -48,17 +37,23 @@ export function RecoverPanel({ onRecovered }: { onRecovered: (status: Status) =>
   }, []);
 
   const recover = useCallback(async () => {
-    if (!file?.share || !file.walletId || !file.publicKey) return;
+    if (file === undefined) return;
     setBusy(true);
     setError(undefined);
     try {
+      const opened = await openRecoveryFile(file, filePassword);
+      if (!opened.walletId) {
+        throw new Error(
+          'This recovery file predates wallet ids, so it cannot be restored automatically.',
+        );
+      }
       onRecovered(
         await send<Status>({
           type: 'recoverFromFile',
           password,
-          walletId: file.walletId,
-          publicKeyHex: file.publicKey,
-          recoveryShareHex: file.share,
+          walletId: opened.walletId,
+          publicKeyHex: opened.publicKeyHex,
+          recoveryShareHex: opened.shareHex,
         }),
       );
     } catch (cause) {
@@ -66,7 +61,7 @@ export function RecoverPanel({ onRecovered }: { onRecovered: (status: Status) =>
     } finally {
       setBusy(false);
     }
-  }, [file, onRecovered, password]);
+  }, [file, filePassword, onRecovered, password]);
 
   return (
     <section>
@@ -99,6 +94,19 @@ export function RecoverPanel({ onRecovered }: { onRecovered: (status: Status) =>
           event.target.value = '';
         }}
       />
+
+      {file !== undefined && (
+        <>
+          <label htmlFor="recover-file-password">Recovery file password</label>
+          <input
+            id="recover-file-password"
+            type="password"
+            value={filePassword}
+            autoComplete="off"
+            onChange={(event) => setFilePassword(event.target.value)}
+          />
+        </>
+      )}
 
       <label htmlFor="recover-password">New password (8 characters or more)</label>
       <input

@@ -54,6 +54,8 @@ We do not hide these limits in marketing, the README or the UI.
 - Fresh salt and nonce per record. Never reuse a nonce.
 - Records carry a `format_version`; every change ships a migration test. The extension vault is
   at version 2, and version 1 records are refused rather than silently misread.
+- The recovery file uses the same primitives with its own password (`export.md`), so a stolen
+  file does not even yield one usable share.
 - Only ciphertext goes into `chrome.storage.local`. Plaintext shares are never stored.
 
 ## Locking and unlocking

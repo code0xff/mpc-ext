@@ -1,6 +1,7 @@
 import { useCallback, useRef, useState } from 'react';
 
 import type { Signed } from '../../src/messages';
+import { openRecoveryFile } from '../../src/recoveryFile';
 import { send } from './api';
 
 /**
@@ -15,6 +16,7 @@ export function SignPanel({ serverUp }: { serverUp: boolean | undefined }) {
   const [result, setResult] = useState<Signed>();
   const [error, setError] = useState<string>();
   const [busy, setBusy] = useState(false);
+  const [filePassword, setFilePassword] = useState('');
   const fileInput = useRef<HTMLInputElement>(null);
 
   const valid = /^[0-9a-fA-F]{64}$/.test(digest);
@@ -36,15 +38,12 @@ export function SignPanel({ serverUp }: { serverUp: boolean | undefined }) {
       setBusy(true);
       setError(undefined);
       try {
-        const parsed = JSON.parse(await file.text()) as { kind?: string; share?: string };
-        if (parsed.kind !== 'mpc-ext-recovery' || !parsed.share) {
-          throw new Error('That does not look like an mpc-ext recovery file.');
-        }
+        const opened = await openRecoveryFile(JSON.parse(await file.text()), filePassword);
         setResult(
           await send<Signed>({
             type: 'signOffline',
             digestHex: digest.toLowerCase(),
-            recoveryShareHex: parsed.share,
+            recoveryShareHex: opened.shareHex,
           }),
         );
       } catch (cause) {
@@ -53,7 +52,7 @@ export function SignPanel({ serverUp }: { serverUp: boolean | undefined }) {
         setBusy(false);
       }
     },
-    [digest],
+    [digest, filePassword],
   );
 
   return (
@@ -84,6 +83,15 @@ export function SignPanel({ serverUp }: { serverUp: boolean | undefined }) {
       >
         {busy ? 'Signing…' : 'Sign with the server'}
       </button>
+
+      <label htmlFor="recovery-file-password">Recovery file password</label>
+      <input
+        id="recovery-file-password"
+        type="password"
+        value={filePassword}
+        autoComplete="off"
+        onChange={(event) => setFilePassword(event.target.value)}
+      />
 
       <button
         type="button"

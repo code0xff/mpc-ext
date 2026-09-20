@@ -2,36 +2,19 @@
  * Exporting the recovery file (share B).
  *
  * It carries the whole share, so it is about 230 KB and cannot be turned into a mnemonic or a QR
- * code (`docs/adr/0005-share-placement.md`).
+ * code (`docs/adr/0005-share-placement.md`). The share is encrypted under a password chosen at
+ * export time (`src/recoveryFile.ts`).
  */
 import type { CreatedKey } from '../../src/messages';
+import { encryptRecoveryFile } from '../../src/recoveryFile';
 
-/** The recovery file container. `publicKey` is used to check integrity on import. */
-export interface RecoveryFile {
-  formatVersion: 2;
-  kind: 'mpc-ext-recovery';
-  createdAt: string;
-  publicKey: string;
-  /** Identifies the wallet to the server, so a fresh install can find share C. Not a secret. */
-  walletId: string;
-  share: string;
-  note: string;
-}
-
-export function buildRecoveryFile(created: CreatedKey): RecoveryFile {
-  return {
-    formatVersion: 2,
-    kind: 'mpc-ext-recovery',
-    createdAt: new Date().toISOString(),
-    publicKey: created.publicKeyHex,
-    walletId: created.walletId,
-    share: created.recoveryShareHex,
-    note: 'mpc-ext recovery file (share B). Store it somewhere other than the extension. This file alone cannot sign.',
-  };
-}
-
-export function downloadRecoveryFile(created: CreatedKey): void {
-  const file = buildRecoveryFile(created);
+export async function downloadRecoveryFile(created: CreatedKey, password: string): Promise<void> {
+  const file = await encryptRecoveryFile(
+    password,
+    created.recoveryShareHex,
+    created.publicKeyHex,
+    created.walletId,
+  );
   const url = URL.createObjectURL(
     new Blob([JSON.stringify(file, null, 2)], { type: 'application/json' }),
   );

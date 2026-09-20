@@ -215,9 +215,16 @@ async function passkeyStatus(ceremonyId: string) {
   return passkeyCeremonyStatus(await settings.serverUrl(), walletId, ceremonyId);
 }
 
-/** Completes a server-origin passkey ceremony before a signing session is opened. */
-async function authorizeSign(signId: string, digest: string): Promise<void> {
-  const { ceremonyId } = await startPasskey('sign', signId, digest);
+/**
+ * Completes a server-origin passkey ceremony before a signing session is opened. A wallet
+ * restored from a recovery file signs under the `recovery` policy, not `sign`.
+ */
+async function authorizeSign(
+  purpose: 'sign' | 'recovery',
+  signId: string,
+  digest: string,
+): Promise<void> {
+  const { ceremonyId } = await startPasskey(purpose, signId, digest);
   const startedAt = Date.now();
   try {
     for (;;) {
@@ -295,7 +302,11 @@ async function sign(digestHex: string): Promise<Signed> {
 
   await loadWasm();
   const signId = crypto.getRandomValues(new Uint8Array(32));
-  await authorizeSign(toHex(signId), digestHex);
+  await authorizeSign(
+    localParty === PARTY.recovery ? 'recovery' : 'sign',
+    toHex(signId),
+    digestHex,
+  );
   const signature = await signWithServer(
     await settings.serverUrl(),
     walletId,
