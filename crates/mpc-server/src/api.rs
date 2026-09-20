@@ -42,6 +42,8 @@ pub struct AppState {
     pub sealing: SealingKey,
     /// Fixed relying-party configuration for the server-origin ceremony.
     pub passkey: PasskeyConfig,
+    /// How long a recovery waits before it can replace the device key.
+    pub recovery: crate::recovery::RecoveryConfig,
 }
 
 /// A device public-key registration request.
@@ -512,6 +514,11 @@ async fn advance_sign(
         crate::reshare::advance,
         crate::reshare::commit,
         crate::reshare::abort,
+        crate::recovery::request,
+        crate::recovery::status,
+        crate::recovery::complete,
+        crate::recovery::pending,
+        crate::recovery::cancel,
         passkey::register_options,
         passkey::register_finish,
         passkey::assert_options,
@@ -535,6 +542,13 @@ async fn advance_sign(
         crate::reshare::AdvanceReshare,
         crate::reshare::AdvancedReshare,
         crate::reshare::FinishReshare,
+        crate::recovery::RequestRecovery,
+        crate::recovery::RecoveryRequested,
+        crate::recovery::RecoveryCall,
+        crate::recovery::RecoveryState,
+        crate::recovery::ListRecoveries,
+        crate::recovery::PendingRecovery,
+        crate::recovery::PendingRecoveries,
         WireEnvelope,
         RegisterOptionsRequest,
         RegisterOptionsResponse,
@@ -568,6 +582,11 @@ pub fn router(state: AppState) -> Router {
         .route("/v1/reshare/round", post(crate::reshare::advance))
         .route("/v1/reshare/commit", post(crate::reshare::commit))
         .route("/v1/reshare/abort", post(crate::reshare::abort))
+        .route("/v1/recovery/request", post(crate::recovery::request))
+        .route("/v1/recovery/status", post(crate::recovery::status))
+        .route("/v1/recovery/complete", post(crate::recovery::complete))
+        .route("/v1/recovery/pending", post(crate::recovery::pending))
+        .route("/v1/recovery/cancel", post(crate::recovery::cancel))
         .route(
             "/v1/passkeys/register/options",
             post(passkey::register_options),
@@ -613,6 +632,7 @@ impl IntoResponse for ApiError {
         let status = match &self.0 {
             Error::UnknownSession => StatusCode::NOT_FOUND,
             Error::Authentication => StatusCode::UNAUTHORIZED,
+            Error::RateLimited => StatusCode::TOO_MANY_REQUESTS,
             Error::Protocol(_) => StatusCode::BAD_REQUEST,
             Error::Config(_) | Error::Crypto(_) | Error::Storage(_) | Error::Migration(_) => {
                 StatusCode::INTERNAL_SERVER_ERROR
@@ -656,7 +676,7 @@ pub(crate) fn hex(bytes: &[u8]) -> String {
     bytes.iter().map(|b| format!("{b:02x}")).collect()
 }
 
-fn decode_hex(value: &str) -> Option<Vec<u8>> {
+pub(crate) fn decode_hex(value: &str) -> Option<Vec<u8>> {
     if !value.len().is_multiple_of(2) {
         return None;
     }

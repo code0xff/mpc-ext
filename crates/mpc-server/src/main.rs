@@ -27,11 +27,16 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         store: Store::open(&database_url).await?,
         sealing: SealingKey::from_env()?,
         passkey: PasskeyConfig::from_env()?,
+        recovery: mpc_server::recovery::RecoveryConfig::from_env()?,
     };
 
     let listener = tokio::net::TcpListener::bind(addr).await?;
     tracing::info!(%addr, docs = "/docs", "mpc-server listening");
     tracing::info!(rp_id = %state.passkey.rp_id, origin = %state.passkey.origin, "WebAuthn RP configured");
+    tracing::info!(
+        cooling_seconds = state.recovery.cooling_seconds,
+        "recovery cooling-off period"
+    );
 
     axum::serve(listener, router(state)).await?;
     Ok(())

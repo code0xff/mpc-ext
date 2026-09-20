@@ -8,6 +8,7 @@ pub mod auth;
 pub mod auth_page;
 pub mod crypto;
 pub mod passkey;
+pub mod recovery;
 pub mod reshare;
 pub mod store;
 
@@ -41,7 +42,9 @@ pub enum Error {
     #[error("authentication failed")]
     Authentication,
 
-    /// The request device proof is missing or invalid.
+    /// Too many requests for this wallet in a short time.
+    #[error("too many requests")]
+    RateLimited,
 
     /// The protocol run failed.
     #[error("protocol error: {0}")]
