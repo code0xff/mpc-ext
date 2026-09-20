@@ -406,18 +406,21 @@ impl Store {
         Ok(result.rows_affected() == 1)
     }
 
-    /// Registers or replaces the public device key for a wallet.
+    /// Registers a wallet's first device key. Returns `false`, changing nothing, when the wallet
+    /// already has one.
+    ///
+    /// This must never overwrite. Replacing a key is a recovery, which needs a passkey assertion
+    /// and a cooling-off wait (`docs/adr/0008-recovery-start-and-device-key-replacement.md`).
     pub async fn register_device_key(
         &self,
         wallet_id: &str,
         public_key: &[u8],
-    ) -> Result<(), Error> {
+    ) -> Result<bool, Error> {
         let now = timestamp();
-        sqlx::query(
+        let result = sqlx::query(
             "INSERT INTO device_keys (wallet_id, public_key, created_at, updated_at)
              VALUES (?, ?, ?, ?)
-             ON CONFLICT(wallet_id) DO UPDATE SET public_key = excluded.public_key,
-                                                   updated_at = excluded.updated_at",
+             ON CONFLICT(wallet_id) DO NOTHING",
         )
         .bind(wallet_id)
         .bind(public_key)
@@ -425,7 +428,7 @@ impl Store {
         .bind(&now)
         .execute(&self.pool)
         .await?;
-        Ok(())
+        Ok(result.rows_affected() == 1)
     }
 
     /// Reads the registered device public key.
