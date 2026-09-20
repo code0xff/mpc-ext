@@ -93,6 +93,31 @@ pub fn sign(
     Ok(out)
 }
 
+/// Reconstructs the full private key from two shares. Returns 32 big-endian bytes.
+///
+/// The result is checked against `public_key`, so a wrong share pair fails instead of yielding a
+/// plausible but unrelated key. The MPC benefit is gone once the caller holds these bytes;
+/// callers must warn the user and wipe the buffer (`docs/export.md`).
+#[wasm_bindgen]
+pub fn export_private_key(
+    share_a: &[u8],
+    party_a: u8,
+    share_b: &[u8],
+    party_b: u8,
+    public_key: &[u8],
+) -> Result<Vec<u8>, JsValue> {
+    let public_key: [u8; 33] = public_key
+        .try_into()
+        .map_err(|_| JsValue::from_str("public key must be 33 bytes"))?;
+
+    let a = mpc_core::KeyShare::new(mpc_core::PartyId(party_a), share_a.to_vec());
+    let b = mpc_core::KeyShare::new(mpc_core::PartyId(party_b), share_b.to_vec());
+
+    let key = mpc_core::export_private_key_for(&[&a, &b], &mpc_core::PublicKey(public_key))
+        .map_err(to_js)?;
+    Ok(key.0.to_vec())
+}
+
 /// Regenerates all three shares. The public key is preserved.
 #[wasm_bindgen]
 pub fn refresh(keyset: &Keyset, session_id: &[u8]) -> Result<Keyset, JsValue> {

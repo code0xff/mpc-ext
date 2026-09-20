@@ -35,6 +35,17 @@ created after the fact.
 - The MPC security benefit disappears at that moment. The UI warns loudly and the user must
   explicitly confirm the risk.
 - Afterwards, advise retiring the key and moving to a new one.
+- **Implementation.** The popup asks for an explicit acknowledgement, the wallet password again,
+  and the recovery file with its password. The extension combines its own share (A) with the
+  recovery file (B) in wasm (`export_private_key`). The result is checked against the wallet's
+  public key, because two shares from different wallets or refresh epochs interpolate to a
+  plausible but unrelated scalar; a mismatch fails instead of returning a wrong key.
+- **Not available after a device-loss restore.** That wallet holds share B, the same share the
+  recovery file carries, and C never leaves the server, so there is no second share to combine
+  (`recovery.md`). The panel is hidden for restored wallets.
+- The key is shown for a minute and then hidden, is never stored, and the clipboard is cleared
+  30 seconds after a copy (best effort: it does not fire if the popup closes first). An event
+  with a timestamp and no key material is kept in the local event log.
 
 ## Onboarding requirements
 

@@ -4,6 +4,7 @@ import type { CreatedKey, Status, WasmHealth } from '../../src/messages';
 import { send } from './api';
 import { MIN_PASSWORD_LENGTH } from '../../src/recoveryFile';
 import { downloadRecoveryFile } from './recoveryFile';
+import { ExportPanel } from './ExportPanel';
 import { OriginsPanel } from './OriginsPanel';
 import { RecoverPanel } from './RecoverPanel';
 import { ServerPanel } from './ServerPanel';
@@ -212,6 +213,9 @@ export function App() {
 
       {status?.kind === 'unlocked' && <SignPanel serverUp={serverUp} />}
       {status?.kind === 'unlocked' && <OriginsPanel />}
+      {status?.kind === 'unlocked' && !status.recovered && (
+        <ExportPanel publicKeyHex={status.publicKeyHex} />
+      )}
 
       <ServerPanel onChanged={checkServer} />
 

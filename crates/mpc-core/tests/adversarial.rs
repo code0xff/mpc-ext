@@ -8,7 +8,10 @@
 // Panicking is how a test asserts. Production code keeps these lints.
 #![allow(clippy::expect_used, clippy::unwrap_used, clippy::panic)]
 
-use mpc_core::{dkg, export_private_key, refresh, reshare, sign, verify, Error, KeyShare, PartyId};
+use mpc_core::{
+    dkg, export_private_key, export_private_key_for, refresh, reshare, sign, verify, Error,
+    KeyShare, PartyId,
+};
 
 fn session_id(tag: u8) -> [u8; 32] {
     let mut id = [0u8; 32];
@@ -231,5 +234,51 @@ fn derives_a_checksummed_ethereum_address() {
         mpc_core::ethereum_address(&mpc_core::PublicKey(same)).expect("derivation"),
         address,
         "the address must be stable for a given key"
+    );
+}
+
+#[test]
+fn checked_export_returns_the_key_for_the_wallets_own_shares() {
+    let (shares, public_key) = dkg(&session_id(30)).expect("DKG should succeed");
+
+    let checked =
+        export_private_key_for(&[share_of(&shares, 0), share_of(&shares, 1)], &public_key)
+            .expect("the wallet's own shares should export");
+    let unchecked = export_private_key(&[share_of(&shares, 0), share_of(&shares, 2)])
+        .expect("any two shares should export");
+
+    assert_eq!(checked.0, unchecked.0, "every pair must yield the same key");
+}
+
+#[test]
+fn checked_export_rejects_another_wallets_public_key() {
+    let (shares, _) = dkg(&session_id(31)).expect("DKG should succeed");
+    let (_, other_public_key) = dkg(&session_id(32)).expect("DKG should succeed");
+
+    let result = export_private_key_for(
+        &[share_of(&shares, 0), share_of(&shares, 1)],
+        &other_public_key,
+    );
+
+    assert!(
+        result.is_err(),
+        "a key that does not match the public key must not be exported"
+    );
+}
+
+#[test]
+fn checked_export_rejects_shares_from_different_refresh_epochs() {
+    let (shares, public_key) = dkg(&session_id(33)).expect("DKG should succeed");
+    let refreshed = refresh(&shares, &session_id(34)).expect("refresh should succeed");
+
+    // One stale share and one fresh share interpolate to an unrelated scalar.
+    let result = export_private_key_for(
+        &[share_of(&shares, 0), share_of(&refreshed, 1)],
+        &public_key,
+    );
+
+    assert!(
+        result.is_err(),
+        "shares from different epochs must not export a wrong key"
     );
 }

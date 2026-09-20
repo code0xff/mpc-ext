@@ -61,7 +61,7 @@
 ## Phase 5 — export
 
 - [x] Recovery file import (restore in the popup, offline signing)
-- [ ] Full private key export in the UI, with warnings
+- [x] Full private key export in the UI, with warnings (verified against the public key)
 - [ ] Re-export prompts after refresh or reshare
 
 ## Phase 6 — hardening

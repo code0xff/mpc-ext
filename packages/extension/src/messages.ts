@@ -1,8 +1,9 @@
 /**
  * The message contract between the popup and the background worker.
  *
- * Secrets do not cross this boundary. The one exception is exporting the recovery file, and even
- * then the value is handed to the user to save — the extension never stores it.
+ * Secrets do not cross this boundary, with two exceptions the user asks for explicitly: the
+ * recovery file at key creation, and the full private key export (`docs/export.md`). In both the
+ * value is handed to the user to save — the extension never stores it.
  */
 
 /** The extension's current state. */
@@ -48,6 +49,11 @@ export type Request =
       publicKeyHex: string;
       recoveryShareHex: string;
     }
+  /**
+   * Reconstruct the full private key from the extension share and a recovery file. Dangerous:
+   * the MPC benefit is gone for whoever holds the result. Needs the wallet password again.
+   */
+  | { type: 'exportPrivateKey'; password: string; recoveryShareHex: string }
   | { type: 'readSettings' }
   | { type: 'setServerUrl'; serverUrl: string }
   | { type: 'registerPasskey' }
@@ -88,4 +94,9 @@ export interface Signed {
   signatureHex: string;
   /** Which path produced it, so the UI can say so. */
   via: 'server' | 'recoveryFile';
+}
+
+/** The result of a private key export. Shown to the user once and never stored. */
+export interface ExportedKey {
+  privateKeyHex: string;
 }
