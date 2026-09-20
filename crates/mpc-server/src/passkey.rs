@@ -36,7 +36,7 @@ const USER_HANDLE_LEN: usize = 64;
 const MAX_CREDENTIAL_JSON_BYTES: usize = 128 * 1024;
 const MAX_OPERATION_ID_LEN: usize = 256;
 const MAX_PURPOSE_LEN: usize = 32;
-const HANDOFF_TTL_SECONDS: i64 = 300;
+pub(crate) const HANDOFF_TTL_SECONDS: i64 = 300;
 const AUTHORIZATION_TTL_SECONDS: i64 = 300;
 
 /// A fixed relying-party configuration. It is loaded at startup and never derived from a request
@@ -215,7 +215,7 @@ struct StoredCredential {
 type StoredPublicKey = CompressedPubKey<[u8; 32], [u8; 32], [u8; 48], Vec<u8>>;
 type StoredStaticState = StaticState<StoredPublicKey>;
 
-fn hash_handoff(token: &str) -> [u8; 32] {
+pub(crate) fn hash_handoff(token: &str) -> [u8; 32] {
     let mut hasher = Sha256::new();
     hasher.update(token.as_bytes());
     hasher.finalize().into()
@@ -917,7 +917,7 @@ impl StoredCredential {
     }
 }
 
-fn validate_wallet_id(wallet_id: &str) -> Result<(), ApiError> {
+pub(crate) fn validate_wallet_id(wallet_id: &str) -> Result<(), ApiError> {
     if wallet_id.is_empty() || wallet_id.len() > 128 {
         return Err(Error::Protocol("wallet_id is malformed".into()).into());
     }

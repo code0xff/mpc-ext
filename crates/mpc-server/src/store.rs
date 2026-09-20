@@ -12,6 +12,43 @@ use crate::crypto::Sealed;
 use crate::Error;
 
 /// The server-side state for one browser-origin WebAuthn ceremony.
+/// A recovery request as stored. `status` is one of `awaiting_assertion`, `cooling`, `completed`,
+/// `cancelled` or `expired`.
+#[derive(Debug, Clone, FromRow)]
+pub struct RecoveryRequest {
+    pub request_id: String,
+    pub wallet_id: String,
+    pub status: String,
+    pub new_device_key: Vec<u8>,
+    pub created_unix: i64,
+    /// When the request lapses, or the last moment a cooling request can be completed.
+    pub expires_unix: i64,
+    /// When the cooling-off period ends. `None` until the passkey assertion has been verified.
+    pub ready_unix: Option<i64>,
+}
+
+/// The result of starting a request's cooling-off period.
+#[derive(Debug, PartialEq, Eq)]
+pub enum CoolingStart {
+    /// The period began and ends at this unix time.
+    Started { ready_unix: i64 },
+    /// The request is not waiting for an assertion (unknown, lapsed, or already past that step).
+    NotAwaiting,
+    /// Another request for this wallet is already cooling.
+    AnotherCooling,
+}
+
+/// The result of completing a recovery.
+#[derive(Debug, PartialEq, Eq)]
+pub enum RecoveryCompletion {
+    /// The device key was replaced.
+    Done,
+    /// The cooling-off period has not ended yet.
+    NotReady { ready_unix: i64 },
+    /// The request is unknown, cancelled, lapsed or already used.
+    Gone,
+}
+
 #[derive(Clone, Debug)]
 pub struct BrowserCeremony {
     pub session_id: String,
@@ -429,6 +466,246 @@ impl Store {
         .execute(&self.pool)
         .await?;
         Ok(result.rows_affected() == 1)
+    }
+
+    /// Records a recovery request, unless the wallet has made too many lately.
+    ///
+    /// Returns `false` when it is over the limit. The request only asks for a passkey assertion;
+    /// it changes nothing by itself.
+    pub async fn create_recovery_request(
+        &self,
+        request_id: &str,
+        wallet_id: &str,
+        new_device_key: &[u8],
+        ttl_seconds: i64,
+        max_per_hour: i64,
+    ) -> Result<bool, Error> {
+        let now = unix_now();
+        let mut tx = self.pool.begin().await?;
+        let (recent,): (i64,) = sqlx::query_as(
+            "SELECT COUNT(*) FROM recovery_requests WHERE wallet_id = ? AND created_unix >= ?",
+        )
+        .bind(wallet_id)
+        .bind(now - 3600)
+        .fetch_one(&mut *tx)
+        .await?;
+        if recent >= max_per_hour {
+            return Ok(false);
+        }
+        sqlx::query(
+            "INSERT INTO recovery_requests
+               (request_id, wallet_id, status, created_at, new_device_key, created_unix, expires_unix)
+             VALUES (?, ?, 'awaiting_assertion', ?, ?, ?, ?)",
+        )
+        .bind(request_id)
+        .bind(wallet_id)
+        .bind(timestamp())
+        .bind(new_device_key)
+        .bind(now)
+        .bind(now + ttl_seconds)
+        .execute(&mut *tx)
+        .await?;
+        sqlx::query(
+            "INSERT INTO audit_log (wallet_id, event, created_at) VALUES (?, 'recovery.requested', ?)",
+        )
+        .bind(wallet_id)
+        .bind(timestamp())
+        .execute(&mut *tx)
+        .await?;
+        tx.commit().await?;
+        Ok(true)
+    }
+
+    /// Reads a recovery request belonging to `wallet_id`.
+    pub async fn recovery_request(
+        &self,
+        request_id: &str,
+        wallet_id: &str,
+    ) -> Result<Option<RecoveryRequest>, Error> {
+        Ok(sqlx::query_as::<_, RecoveryRequest>(
+            "SELECT request_id, wallet_id, status, new_device_key, created_unix, expires_unix,
+                    ready_unix
+             FROM recovery_requests
+             WHERE request_id = ? AND wallet_id = ? AND new_device_key IS NOT NULL",
+        )
+        .bind(request_id)
+        .bind(wallet_id)
+        .fetch_optional(&self.pool)
+        .await?)
+    }
+
+    /// Moves a request whose passkey assertion has been verified into its cooling-off period.
+    pub async fn start_recovery_cooling(
+        &self,
+        request_id: &str,
+        wallet_id: &str,
+        cooling_seconds: i64,
+        complete_window_seconds: i64,
+    ) -> Result<CoolingStart, Error> {
+        let now = unix_now();
+        let ready = now + cooling_seconds;
+        let mut tx = self.pool.begin().await?;
+
+        // A cooling request nobody completed in time must not block the next one.
+        sqlx::query(
+            "UPDATE recovery_requests SET status = 'expired'
+             WHERE wallet_id = ? AND status = 'cooling' AND expires_unix < ?",
+        )
+        .bind(wallet_id)
+        .bind(now)
+        .execute(&mut *tx)
+        .await?;
+
+        let updated = sqlx::query(
+            "UPDATE recovery_requests
+             SET status = 'cooling', approved_at = ?, ready_unix = ?, expires_unix = ?
+             WHERE request_id = ? AND wallet_id = ? AND status = 'awaiting_assertion'
+               AND expires_unix >= ?",
+        )
+        .bind(timestamp())
+        .bind(ready)
+        .bind(ready + complete_window_seconds)
+        .bind(request_id)
+        .bind(wallet_id)
+        .bind(now)
+        .execute(&mut *tx)
+        .await;
+        let updated = match updated {
+            Ok(result) => result,
+            Err(sqlx::Error::Database(error)) if error.is_unique_violation() => {
+                return Ok(CoolingStart::AnotherCooling);
+            }
+            Err(other) => return Err(other.into()),
+        };
+        if updated.rows_affected() != 1 {
+            return Ok(CoolingStart::NotAwaiting);
+        }
+        sqlx::query(
+            "INSERT INTO audit_log (wallet_id, event, created_at) VALUES (?, 'recovery.cooling', ?)",
+        )
+        .bind(wallet_id)
+        .bind(timestamp())
+        .execute(&mut *tx)
+        .await?;
+        tx.commit().await?;
+        Ok(CoolingStart::Started { ready_unix: ready })
+    }
+
+    /// Replaces the wallet's device key with the request's, once the cooling-off period is over.
+    ///
+    /// Everything happens in one transaction: the key swap, the request's own end, and the end of
+    /// every other request the wallet still had open.
+    pub async fn complete_recovery(
+        &self,
+        request_id: &str,
+        wallet_id: &str,
+    ) -> Result<RecoveryCompletion, Error> {
+        let now = unix_now();
+        let mut tx = self.pool.begin().await?;
+        let row: Option<(String, Option<i64>, i64, Vec<u8>)> = sqlx::query_as(
+            "SELECT status, ready_unix, expires_unix, new_device_key FROM recovery_requests
+             WHERE request_id = ? AND wallet_id = ? AND new_device_key IS NOT NULL",
+        )
+        .bind(request_id)
+        .bind(wallet_id)
+        .fetch_optional(&mut *tx)
+        .await?;
+        let Some((status, ready, expires, new_key)) = row else {
+            return Ok(RecoveryCompletion::Gone);
+        };
+        let Some(ready) = ready else {
+            return Ok(RecoveryCompletion::Gone);
+        };
+        if status != "cooling" || expires < now {
+            return Ok(RecoveryCompletion::Gone);
+        }
+        if ready > now {
+            return Ok(RecoveryCompletion::NotReady { ready_unix: ready });
+        }
+
+        sqlx::query(
+            "INSERT INTO device_keys (wallet_id, public_key, created_at, updated_at)
+             VALUES (?, ?, ?, ?)
+             ON CONFLICT(wallet_id) DO UPDATE SET public_key = excluded.public_key,
+                                                   updated_at = excluded.updated_at",
+        )
+        .bind(wallet_id)
+        .bind(&new_key)
+        .bind(timestamp())
+        .bind(timestamp())
+        .execute(&mut *tx)
+        .await?;
+        sqlx::query(
+            "UPDATE recovery_requests SET status = 'completed', completed_at = ?
+             WHERE request_id = ?",
+        )
+        .bind(timestamp())
+        .bind(request_id)
+        .execute(&mut *tx)
+        .await?;
+        sqlx::query(
+            "UPDATE recovery_requests SET status = 'cancelled', cancelled_at = ?
+             WHERE wallet_id = ? AND request_id != ?
+               AND status IN ('awaiting_assertion', 'cooling')",
+        )
+        .bind(timestamp())
+        .bind(wallet_id)
+        .bind(request_id)
+        .execute(&mut *tx)
+        .await?;
+        sqlx::query(
+            "INSERT INTO audit_log (wallet_id, event, created_at)
+             VALUES (?, 'recovery.completed', ?)",
+        )
+        .bind(wallet_id)
+        .bind(timestamp())
+        .execute(&mut *tx)
+        .await?;
+        tx.commit().await?;
+        Ok(RecoveryCompletion::Done)
+    }
+
+    /// Cancels a request that has not finished. Returns `false` when there was nothing to cancel.
+    pub async fn cancel_recovery(&self, request_id: &str, wallet_id: &str) -> Result<bool, Error> {
+        let mut tx = self.pool.begin().await?;
+        let updated = sqlx::query(
+            "UPDATE recovery_requests SET status = 'cancelled', cancelled_at = ?
+             WHERE request_id = ? AND wallet_id = ?
+               AND status IN ('awaiting_assertion', 'cooling')",
+        )
+        .bind(timestamp())
+        .bind(request_id)
+        .bind(wallet_id)
+        .execute(&mut *tx)
+        .await?;
+        if updated.rows_affected() != 1 {
+            return Ok(false);
+        }
+        sqlx::query(
+            "INSERT INTO audit_log (wallet_id, event, created_at) VALUES (?, 'recovery.cancelled', ?)",
+        )
+        .bind(wallet_id)
+        .bind(timestamp())
+        .execute(&mut *tx)
+        .await?;
+        tx.commit().await?;
+        Ok(true)
+    }
+
+    /// Recoveries that have passed their passkey assertion and are still in play, oldest first.
+    pub async fn live_recoveries(&self, wallet_id: &str) -> Result<Vec<RecoveryRequest>, Error> {
+        Ok(sqlx::query_as::<_, RecoveryRequest>(
+            "SELECT request_id, wallet_id, status, new_device_key, created_unix, expires_unix,
+                    ready_unix
+             FROM recovery_requests
+             WHERE wallet_id = ? AND status = 'cooling' AND expires_unix >= ?
+               AND new_device_key IS NOT NULL
+             ORDER BY created_unix",
+        )
+        .bind(wallet_id)
+        .bind(unix_now())
+        .fetch_all(&self.pool)
+        .await?)
     }
 
     /// Reads the registered device public key.
@@ -888,4 +1165,8 @@ fn format_time(value: time::OffsetDateTime) -> String {
 
 fn timestamp() -> String {
     format_time(time::OffsetDateTime::now_utc())
+}
+
+fn unix_now() -> i64 {
+    time::OffsetDateTime::now_utc().unix_timestamp()
 }

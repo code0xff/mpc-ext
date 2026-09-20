@@ -13,7 +13,8 @@
     "/v1/device-key": {
       "post": {
         "tags": [],
-        "summary": "Registers a device key. Signing endpoints verify requests with this key.",
+        "summary": "Registers a wallet's first device key. Signing endpoints verify requests with this key.",
+        "description": "A wallet that already has one is refused: replacing a key needs a recovery.",
         "operationId": "register_device_key",
         "requestBody": {
           "content": {
@@ -293,6 +294,166 @@
                 }
               }
             }
+          }
+        }
+      }
+    },
+    "/v1/recovery/cancel": {
+      "post": {
+        "tags": [
+          "crate::recovery"
+        ],
+        "summary": "Cancels a recovery. Either the wallet's current device key or the request's own key may sign,\nso the existing install can object, and the requester can withdraw.",
+        "operationId": "cancel",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RecoveryCall"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "204": {
+            "description": "cancelled"
+          },
+          "404": {
+            "description": "nothing to cancel"
+          }
+        }
+      }
+    },
+    "/v1/recovery/complete": {
+      "post": {
+        "tags": [
+          "crate::recovery"
+        ],
+        "summary": "Replaces the wallet's device key with this request's, once the cooling-off period is over.\nSigned with the new device key.",
+        "operationId": "complete",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RecoveryCall"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "204": {
+            "description": "the device key was replaced"
+          },
+          "400": {
+            "description": "the cooling-off period has not ended"
+          },
+          "404": {
+            "description": "unknown, cancelled or lapsed request"
+          }
+        }
+      }
+    },
+    "/v1/recovery/pending": {
+      "post": {
+        "tags": [
+          "crate::recovery"
+        ],
+        "summary": "Lists the recoveries waiting on a wallet. Signed with the wallet's current device key, so it\nis how an existing install learns that someone asked to replace it.",
+        "operationId": "pending",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ListRecoveries"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "recoveries waiting",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PendingRecoveries"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/recovery/request": {
+      "post": {
+        "tags": [
+          "crate::recovery"
+        ],
+        "summary": "Starts a recovery and opens the passkey ceremony that has to approve it.",
+        "description": "Nothing changes yet. The request only asks for an assertion bound to the new device key.",
+        "operationId": "request",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RequestRecovery"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "request recorded",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RecoveryRequested"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "no such wallet, or it has no passkey"
+          },
+          "429": {
+            "description": "too many requests for this wallet"
+          }
+        }
+      }
+    },
+    "/v1/recovery/status": {
+      "post": {
+        "tags": [
+          "crate::recovery"
+        ],
+        "summary": "Reports where a request stands, and starts its cooling-off period once the passkey assertion\nfor it has been verified. Signed with the new device key.",
+        "operationId": "status",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RecoveryCall"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "the request's state",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RecoveryState"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "missing or invalid device proof"
           }
         }
       }
@@ -929,6 +1090,207 @@
           }
         }
       },
+      "ListRecoveries": {
+        "type": "object",
+        "description": "A request to list what is waiting on a wallet.",
+        "required": [
+          "wallet_id"
+        ],
+        "properties": {
+          "wallet_id": {
+            "type": "string",
+            "description": "The wallet identifier."
+          }
+        }
+      },
+      "PendingRecoveries": {
+        "type": "object",
+        "description": "The recoveries waiting on a wallet.",
+        "required": [
+          "pending"
+        ],
+        "properties": {
+          "pending": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/PendingRecovery"
+            },
+            "description": "Recoveries past their passkey assertion and not yet completed or cancelled."
+          }
+        }
+      },
+      "PendingRecovery": {
+        "type": "object",
+        "description": "One recovery waiting on a wallet.",
+        "required": [
+          "request_id",
+          "requested_at",
+          "ready_at",
+          "key_fingerprint"
+        ],
+        "properties": {
+          "key_fingerprint": {
+            "type": "string",
+            "description": "A short fingerprint of the key that would take over, to compare with the requester's."
+          },
+          "ready_at": {
+            "type": "integer",
+            "format": "int64",
+            "description": "When the cooling-off period ends, in unix seconds."
+          },
+          "request_id": {
+            "type": "string",
+            "description": "The request id."
+          },
+          "requested_at": {
+            "type": "integer",
+            "format": "int64",
+            "description": "When it was made, in unix seconds."
+          }
+        }
+      },
+      "RecoveryCall": {
+        "type": "object",
+        "description": "A call about one request, signed with the new device key.",
+        "required": [
+          "wallet_id",
+          "request_id"
+        ],
+        "properties": {
+          "request_id": {
+            "type": "string",
+            "description": "The request, 64 hex characters."
+          },
+          "wallet_id": {
+            "type": "string",
+            "description": "The wallet identifier."
+          }
+        }
+      },
+      "RecoveryRequested": {
+        "type": "object",
+        "description": "The response to a recovery request.",
+        "required": [
+          "request_id",
+          "ceremony_id",
+          "handoff_token"
+        ],
+        "properties": {
+          "ceremony_id": {
+            "type": "string",
+            "description": "The browser ceremony for the passkey assertion."
+          },
+          "handoff_token": {
+            "type": "string",
+            "description": "The one-use token that starts that ceremony. Submit it in a form body, never in a URL."
+          },
+          "request_id": {
+            "type": "string",
+            "description": "Identifies this request in every later call, 64 hex characters."
+          }
+        }
+      },
+      "RecoveryState": {
+        "oneOf": [
+          {
+            "type": "object",
+            "description": "Waiting for the passkey assertion.",
+            "required": [
+              "state"
+            ],
+            "properties": {
+              "state": {
+                "type": "string",
+                "enum": [
+                  "awaitingAssertion"
+                ]
+              }
+            }
+          },
+          {
+            "type": "object",
+            "description": "The assertion was verified. It can be completed once `ready_at` (unix seconds) has passed.",
+            "required": [
+              "ready_at",
+              "state"
+            ],
+            "properties": {
+              "ready_at": {
+                "type": "integer",
+                "format": "int64",
+                "description": "When the cooling-off period ends, in unix seconds."
+              },
+              "state": {
+                "type": "string",
+                "enum": [
+                  "cooling"
+                ]
+              }
+            }
+          },
+          {
+            "type": "object",
+            "description": "The cooling-off period is over: call `complete`.",
+            "required": [
+              "state"
+            ],
+            "properties": {
+              "state": {
+                "type": "string",
+                "enum": [
+                  "ready"
+                ]
+              }
+            }
+          },
+          {
+            "type": "object",
+            "description": "The device key was replaced.",
+            "required": [
+              "state"
+            ],
+            "properties": {
+              "state": {
+                "type": "string",
+                "enum": [
+                  "completed"
+                ]
+              }
+            }
+          },
+          {
+            "type": "object",
+            "description": "Cancelled before it finished.",
+            "required": [
+              "state"
+            ],
+            "properties": {
+              "state": {
+                "type": "string",
+                "enum": [
+                  "cancelled"
+                ]
+              }
+            }
+          },
+          {
+            "type": "object",
+            "description": "Lapsed before it finished.",
+            "required": [
+              "state"
+            ],
+            "properties": {
+              "state": {
+                "type": "string",
+                "enum": [
+                  "expired"
+                ]
+              }
+            }
+          }
+        ],
+        "description": "Where a recovery request stands."
+      },
       "RegisterDeviceKey": {
         "type": "object",
         "description": "A device public-key registration request.",
@@ -998,6 +1360,24 @@
           "options": {
             "type": "object",
             "description": "The options passed to `navigator.credentials.create`."
+          }
+        }
+      },
+      "RequestRecovery": {
+        "type": "object",
+        "description": "A request to start a recovery. It carries no device proof: the install asking has none yet.",
+        "required": [
+          "wallet_id",
+          "device_public_key"
+        ],
+        "properties": {
+          "device_public_key": {
+            "type": "string",
+            "description": "The new install's public device key: 65 bytes, uncompressed SEC1, as lowercase hex."
+          },
+          "wallet_id": {
+            "type": "string",
+            "description": "The wallet identifier."
           }
         }
       },

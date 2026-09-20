@@ -17,6 +17,7 @@ use mpc_core::{
 use mpc_server::api::{router, AppState};
 use mpc_server::crypto::SealingKey;
 use mpc_server::passkey::PasskeyConfig;
+use mpc_server::recovery::RecoveryConfig;
 use mpc_server::store::Store;
 use p256::ecdsa::{signature::Signer, SigningKey};
 use serde_json::{json, Value};
@@ -33,6 +34,7 @@ async fn test_app() -> axum::Router {
         sealing: SealingKey::new(&[42u8; 32]),
         passkey: PasskeyConfig::new("localhost", "http://localhost:8080")
             .expect("test passkey configuration"),
+        recovery: RecoveryConfig::default(),
     })
 }
 
@@ -102,7 +104,7 @@ async fn a_second_device_key_cannot_replace_the_first() {
 
     // The first key still authenticates, and the intruder's does not.
     let request = json!({ "wallet_id": "wallet-squat", "purpose": "register" });
-    let (status, _) = reshare_post(
+    let (status, _) = signed_post(
         &app,
         &device_key,
         "/v1/passkeys/handoff",
@@ -112,7 +114,7 @@ async fn a_second_device_key_cannot_replace_the_first() {
     .await;
     assert_eq!(status, StatusCode::OK, "the original key must still work");
     let (status, _) =
-        reshare_post(&app, &intruder, "/v1/passkeys/handoff", request, "intruder").await;
+        signed_post(&app, &intruder, "/v1/passkeys/handoff", request, "intruder").await;
     assert_eq!(
         status,
         StatusCode::UNAUTHORIZED,
@@ -282,6 +284,7 @@ async fn passkey_assertion_binding_is_wallet_and_operation_bound() {
         sealing: SealingKey::new(&[42u8; 32]),
         passkey: PasskeyConfig::new("localhost", "http://localhost:8080")
             .expect("test passkey configuration"),
+        recovery: RecoveryConfig::default(),
     });
     let device_key = SigningKey::from_bytes((&[12u8; 32]).into()).expect("device key");
     let public_key = device_key
@@ -365,6 +368,7 @@ async fn signing_rejects_tampered_and_replayed_device_proofs() {
         sealing: SealingKey::new(&[42u8; 32]),
         passkey: PasskeyConfig::new("localhost", "http://localhost:8080")
             .expect("test passkey configuration"),
+        recovery: RecoveryConfig::default(),
     });
     let (_shares, _public_key) = provision(&app, "wallet-auth", 0xd1).await;
     let device_key = SigningKey::from_bytes((&[8u8; 32]).into()).expect("device key");
@@ -932,6 +936,7 @@ async fn extension_and_server_sign_together() {
         sealing: SealingKey::new(&[42u8; 32]),
         passkey: PasskeyConfig::new("localhost", "http://localhost:8080")
             .expect("test passkey configuration"),
+        recovery: RecoveryConfig::default(),
     });
     let (shares, public_key_hex) = provision(&app, "wallet-sign", 0xb7).await;
     let device_key = SigningKey::from_bytes((&[7u8; 32]).into()).expect("device key");
@@ -1102,6 +1107,7 @@ async fn signing_requires_a_matching_one_use_passkey_authorization() {
         sealing: SealingKey::new(&[42u8; 32]),
         passkey: PasskeyConfig::new("localhost", "http://localhost:8080")
             .expect("test passkey configuration"),
+        recovery: RecoveryConfig::default(),
     });
     let _ = provision(&app, "wallet-grant", 0xe1).await;
     let device_key = SigningKey::from_bytes((&[21u8; 32]).into()).expect("device key");
@@ -1282,6 +1288,7 @@ async fn wallet_with_device(wallet: &str) -> (axum::Router, Store, SigningKey) {
         sealing: SealingKey::new(&[42u8; 32]),
         passkey: PasskeyConfig::new("localhost", "http://localhost:8080")
             .expect("test passkey configuration"),
+        recovery: RecoveryConfig::default(),
     });
     let device_key = SigningKey::from_bytes((&[7u8; 32]).into()).expect("device key");
     let registered = hex_of(
@@ -1316,7 +1323,7 @@ async fn grant_reshare(store: &Store, wallet: &str, public_key: &PublicKey, id: 
 
 /// Posts with a device proof. Every call gets its own nonce, so a retry with the same arguments
 /// is judged on its merits and not rejected as a replay.
-async fn reshare_post(
+async fn signed_post(
     app: &axum::Router,
     device_key: &SigningKey,
     path: &str,
@@ -1367,7 +1374,7 @@ async fn run_reshare(
     in_flight.extend(more);
     let mut local = vec![joiner, survivor];
 
-    let (status, body) = reshare_post(
+    let (status, body) = signed_post(
         app,
         device_key,
         "/v1/reshare/session",
@@ -1405,7 +1412,7 @@ async fn run_reshare(
             })
             .map(to_wire)
             .collect();
-        let (status, body) = reshare_post(
+        let (status, body) = signed_post(
             app,
             device_key,
             "/v1/reshare/round",
@@ -1460,7 +1467,7 @@ async fn sign_and_check(
     let start = json!({
         "wallet_id": wallet, "sign_id": sign_hex, "digest": digest_hex, "counterparty": 0,
     });
-    let (status, body) = reshare_post(
+    let (status, body) = signed_post(
         app,
         device_key,
         "/v1/sign/session",
@@ -1497,7 +1504,7 @@ async fn sign_and_check(
             })
             .map(to_wire)
             .collect();
-        let (status, body) = reshare_post(
+        let (status, body) = signed_post(
             app,
             device_key,
             "/v1/sign/round",
@@ -1574,7 +1581,7 @@ async fn reshare_replaces_the_servers_share_and_keeps_the_key() {
     );
 
     let commit = json!({ "wallet_id": RESHARE_WALLET, "reshare_id": hex_of(&id) });
-    let (status, body) = reshare_post(
+    let (status, body) = signed_post(
         &app,
         &device_key,
         "/v1/reshare/commit",
@@ -1609,7 +1616,7 @@ async fn reshare_replaces_the_servers_share_and_keeps_the_key() {
 
     // A second commit finds nothing staged.
     let (status, _) =
-        reshare_post(&app, &device_key, "/v1/reshare/commit", commit, "commit-2").await;
+        signed_post(&app, &device_key, "/v1/reshare/commit", commit, "commit-2").await;
     assert_eq!(status, StatusCode::NOT_FOUND);
 
     // The fresh A' signs with the fresh C, and the signature verifies under the same key.
@@ -1662,7 +1669,7 @@ async fn aborting_a_reshare_leaves_the_previous_share_live() {
     assert!(outcome.is_some());
 
     let finish = json!({ "wallet_id": RESHARE_WALLET, "reshare_id": hex_of(&id) });
-    let (status, _) = reshare_post(
+    let (status, _) = signed_post(
         &app,
         &device_key,
         "/v1/reshare/abort",
@@ -1673,7 +1680,7 @@ async fn aborting_a_reshare_leaves_the_previous_share_live() {
     assert_eq!(status, StatusCode::NO_CONTENT);
 
     // Nothing is left to commit, and the old shares still work together.
-    let (status, _) = reshare_post(
+    let (status, _) = signed_post(
         &app,
         &device_key,
         "/v1/reshare/commit",
@@ -1790,4 +1797,459 @@ async fn reshare_endpoints_need_the_device_key() {
             "{path} must require a device proof"
         );
     }
+}
+
+// ---------------------------------------------------------------------------------------------
+// Recovery start and device key replacement (docs/adr/0008-recovery-start-and-device-key-replacement.md)
+// ---------------------------------------------------------------------------------------------
+
+const RECOVERY_WALLET: &str = "wallet-recovery";
+
+fn device_key_of(seed: u8) -> SigningKey {
+    SigningKey::from_bytes((&[seed; 32]).into()).expect("device key")
+}
+
+fn public_hex(key: &SigningKey) -> String {
+    hex_of(key.verifying_key().to_encoded_point(false).as_bytes())
+}
+
+/// A server whose wallet has a key share, a passkey and a registered device key, and the current
+/// device's key. The share and the passkey are stand-ins: recovery never opens either.
+async fn recovery_fixture(cooling_seconds: i64) -> (axum::Router, Store, SigningKey) {
+    let store = Store::open("sqlite::memory:")
+        .await
+        .expect("the database should open");
+    let app = router(AppState {
+        store: store.clone(),
+        sealing: SealingKey::new(&[42u8; 32]),
+        passkey: PasskeyConfig::new("localhost", "http://localhost:8080")
+            .expect("test passkey configuration"),
+        recovery: RecoveryConfig { cooling_seconds },
+    });
+    store
+        .finish_dkg(
+            "recovery-dkg",
+            RECOVERY_WALLET,
+            &mpc_server::crypto::Sealed {
+                ciphertext: vec![1],
+                nonce: vec![2],
+            },
+            &[3u8; 33],
+        )
+        .await
+        .expect("the wallet should exist");
+    store
+        .put_passkey_credential(RECOVERY_WALLET, b"{}", 0)
+        .await
+        .expect("the passkey should be stored");
+    let current = device_key_of(31);
+    let (status, _) = post(
+        &app,
+        "/v1/device-key",
+        json!({ "wallet_id": RECOVERY_WALLET, "public_key": public_hex(&current) }),
+    )
+    .await;
+    assert_eq!(status, StatusCode::NO_CONTENT);
+    (app, store, current)
+}
+
+/// Asks to recover onto `new_key`, with no device proof. Returns the request id.
+async fn ask_to_recover(app: &axum::Router, new_key: &SigningKey) -> (StatusCode, Value) {
+    post(
+        app,
+        "/v1/recovery/request",
+        json!({ "wallet_id": RECOVERY_WALLET, "device_public_key": public_hex(new_key) }),
+    )
+    .await
+}
+
+fn request_id_bytes(request_id: &str) -> [u8; 32] {
+    let mut out = [0u8; 32];
+    for (i, slot) in out.iter_mut().enumerate() {
+        *slot = u8::from_str_radix(&request_id[i * 2..i * 2 + 2], 16).expect("hex");
+    }
+    out
+}
+
+/// Stores the passkey approval a verified browser ceremony would leave for this request.
+async fn approve(store: &Store, request_id: &str, new_key: &SigningKey) {
+    let digest = mpc_server::recovery::assertion_digest(
+        RECOVERY_WALLET,
+        new_key.verifying_key().to_encoded_point(false).as_bytes(),
+        &request_id_bytes(request_id),
+    );
+    store
+        .put_passkey_authorization(RECOVERY_WALLET, "recovery", request_id, &digest, 300)
+        .await
+        .expect("the approval should be stored");
+}
+
+async fn call_as(
+    app: &axum::Router,
+    key: &SigningKey,
+    path: &str,
+    request_id: &str,
+) -> (StatusCode, Value) {
+    signed_post(
+        app,
+        key,
+        path,
+        json!({ "wallet_id": RECOVERY_WALLET, "request_id": request_id }),
+        "recovery",
+    )
+    .await
+}
+
+#[tokio::test]
+async fn recovery_replaces_the_device_key_once_approved_and_waited_out() {
+    let (app, store, current) = recovery_fixture(0).await;
+    let new_key = device_key_of(32);
+
+    let (status, requested) = ask_to_recover(&app, &new_key).await;
+    assert_eq!(
+        status,
+        StatusCode::OK,
+        "the request should be recorded: {requested}"
+    );
+    let request_id = requested["request_id"]
+        .as_str()
+        .expect("request id")
+        .to_owned();
+    assert!(requested["handoff_token"]
+        .as_str()
+        .is_some_and(|t| !t.is_empty()));
+
+    // Before the passkey approves, the request only waits, and it cannot be completed.
+    let (_, waiting) = call_as(&app, &new_key, "/v1/recovery/status", &request_id).await;
+    assert_eq!(waiting["state"], "awaitingAssertion");
+    let (status, _) = call_as(&app, &new_key, "/v1/recovery/complete", &request_id).await;
+    assert_eq!(
+        status,
+        StatusCode::NOT_FOUND,
+        "an unapproved request must not complete"
+    );
+
+    approve(&store, &request_id, &new_key).await;
+    let (status, approved) = call_as(&app, &new_key, "/v1/recovery/status", &request_id).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(
+        approved["state"], "ready",
+        "a zero cooling period is ready at once: {approved}"
+    );
+
+    let (status, body) = call_as(&app, &new_key, "/v1/recovery/complete", &request_id).await;
+    assert_eq!(status, StatusCode::NO_CONTENT, "completing failed: {body}");
+
+    // The new key now speaks for the wallet, and the old one no longer does.
+    let list = json!({ "wallet_id": RECOVERY_WALLET });
+    let (status, _) =
+        signed_post(&app, &new_key, "/v1/recovery/pending", list.clone(), "new").await;
+    assert_eq!(status, StatusCode::OK, "the new key should be accepted");
+    let (status, _) = signed_post(&app, &current, "/v1/recovery/pending", list, "old").await;
+    assert_eq!(
+        status,
+        StatusCode::UNAUTHORIZED,
+        "the old key must be replaced"
+    );
+
+    // A completed request cannot be completed twice.
+    let (status, _) = call_as(&app, &new_key, "/v1/recovery/complete", &request_id).await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
+}
+
+#[tokio::test]
+async fn recovery_waits_out_the_cooling_off_period_before_replacing_anything() {
+    let (app, store, current) = recovery_fixture(3600).await;
+    let new_key = device_key_of(33);
+    let (_, requested) = ask_to_recover(&app, &new_key).await;
+    let request_id = requested["request_id"]
+        .as_str()
+        .expect("request id")
+        .to_owned();
+
+    approve(&store, &request_id, &new_key).await;
+    let (_, cooling) = call_as(&app, &new_key, "/v1/recovery/status", &request_id).await;
+    assert_eq!(cooling["state"], "cooling", "{cooling}");
+    let ready_at = cooling["ready_at"].as_i64().expect("ready_at");
+    let now = time::OffsetDateTime::now_utc().unix_timestamp();
+    assert!(
+        (ready_at - now - 3600).abs() <= 5,
+        "ready_at should be an hour away"
+    );
+
+    let (status, body) = call_as(&app, &new_key, "/v1/recovery/complete", &request_id).await;
+    assert_eq!(
+        status,
+        StatusCode::BAD_REQUEST,
+        "completing early must fail: {body}"
+    );
+
+    // Nothing changed: the current device key still works.
+    let (status, _) = signed_post(
+        &app,
+        &current,
+        "/v1/recovery/pending",
+        json!({ "wallet_id": RECOVERY_WALLET }),
+        "still",
+    )
+    .await;
+    assert_eq!(
+        status,
+        StatusCode::OK,
+        "the current key must keep working while waiting"
+    );
+}
+
+#[tokio::test]
+async fn an_approval_for_another_key_does_not_start_the_wait() {
+    let (app, store, _current) = recovery_fixture(3600).await;
+    let honest = device_key_of(34);
+    let attacker = device_key_of(35);
+    let (_, honest_request) = ask_to_recover(&app, &honest).await;
+    let honest_id = honest_request["request_id"]
+        .as_str()
+        .expect("id")
+        .to_owned();
+    let (_, attacker_request) = ask_to_recover(&app, &attacker).await;
+    let attacker_id = attacker_request["request_id"]
+        .as_str()
+        .expect("id")
+        .to_owned();
+
+    // The passkey approved the honest request, bound to the honest key.
+    approve(&store, &honest_id, &honest).await;
+
+    let (_, state) = call_as(&app, &attacker, "/v1/recovery/status", &attacker_id).await;
+    assert_eq!(
+        state["state"], "awaitingAssertion",
+        "someone else's approval must not start this request's wait: {state}"
+    );
+
+    // Nor can the attacker's key ask about the honest request.
+    let (status, _) = call_as(&app, &attacker, "/v1/recovery/status", &honest_id).await;
+    assert_eq!(
+        status,
+        StatusCode::UNAUTHORIZED,
+        "a request answers only to its own key"
+    );
+
+    let (_, state) = call_as(&app, &honest, "/v1/recovery/status", &honest_id).await;
+    assert_eq!(state["state"], "cooling");
+}
+
+#[tokio::test]
+async fn a_recovery_needs_a_wallet_and_a_passkey() {
+    let (app, store, _current) = recovery_fixture(0).await;
+    let new_key = device_key_of(36);
+
+    let (status, _) = post(
+        &app,
+        "/v1/recovery/request",
+        json!({ "wallet_id": "no-such-wallet", "device_public_key": public_hex(&new_key) }),
+    )
+    .await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
+
+    // A wallet with a key share but no passkey has nothing that could approve a recovery.
+    store
+        .finish_dkg(
+            "no-passkey-dkg",
+            "wallet-no-passkey",
+            &mpc_server::crypto::Sealed {
+                ciphertext: vec![1],
+                nonce: vec![2],
+            },
+            &[3u8; 33],
+        )
+        .await
+        .expect("the wallet should exist");
+    let (status, _) = post(
+        &app,
+        "/v1/recovery/request",
+        json!({ "wallet_id": "wallet-no-passkey", "device_public_key": public_hex(&new_key) }),
+    )
+    .await;
+    assert_eq!(
+        status,
+        StatusCode::NOT_FOUND,
+        "no passkey means no recovery"
+    );
+}
+
+#[tokio::test]
+async fn a_recovery_request_must_carry_a_real_device_key() {
+    let (app, _store, _current) = recovery_fixture(0).await;
+    for bad in [
+        "not-hex".to_owned(),
+        format!("02{}", "ab".repeat(64)),
+        // The right shape, but not a point on the curve.
+        format!("04{}", "00".repeat(64)),
+    ] {
+        let (status, body) = post(
+            &app,
+            "/v1/recovery/request",
+            json!({ "wallet_id": RECOVERY_WALLET, "device_public_key": bad }),
+        )
+        .await;
+        assert_eq!(
+            status,
+            StatusCode::BAD_REQUEST,
+            "{bad} was accepted: {body}"
+        );
+    }
+}
+
+#[tokio::test]
+async fn a_wallet_may_open_only_five_recovery_requests_an_hour() {
+    let (app, _store, _current) = recovery_fixture(0).await;
+    for i in 0..5u8 {
+        let (status, body) = ask_to_recover(&app, &device_key_of(40 + i)).await;
+        assert_eq!(
+            status,
+            StatusCode::OK,
+            "request {i} should be allowed: {body}"
+        );
+    }
+    let (status, _) = ask_to_recover(&app, &device_key_of(50)).await;
+    assert_eq!(status, StatusCode::TOO_MANY_REQUESTS);
+}
+
+#[tokio::test]
+async fn the_current_device_sees_a_pending_recovery_and_can_cancel_it() {
+    let (app, store, current) = recovery_fixture(3600).await;
+    let new_key = device_key_of(37);
+    let (_, requested) = ask_to_recover(&app, &new_key).await;
+    let request_id = requested["request_id"].as_str().expect("id").to_owned();
+
+    let list = json!({ "wallet_id": RECOVERY_WALLET });
+    // Before the passkey approves there is nothing to warn about.
+    let (_, none) = signed_post(&app, &current, "/v1/recovery/pending", list.clone(), "l1").await;
+    assert_eq!(none["pending"].as_array().expect("list").len(), 0);
+
+    approve(&store, &request_id, &new_key).await;
+    call_as(&app, &new_key, "/v1/recovery/status", &request_id).await;
+
+    let (status, seen) = signed_post(&app, &current, "/v1/recovery/pending", list, "l2").await;
+    assert_eq!(status, StatusCode::OK);
+    let pending = seen["pending"].as_array().expect("list");
+    assert_eq!(pending.len(), 1, "{seen}");
+    assert_eq!(pending[0]["request_id"], request_id.as_str());
+    assert_eq!(
+        pending[0]["key_fingerprint"],
+        mpc_server::recovery::key_fingerprint(
+            new_key.verifying_key().to_encoded_point(false).as_bytes()
+        ),
+        "the fingerprint lets the owner recognise the key"
+    );
+
+    let (status, _) = call_as(&app, &current, "/v1/recovery/cancel", &request_id).await;
+    assert_eq!(
+        status,
+        StatusCode::NO_CONTENT,
+        "the current device may object"
+    );
+
+    let (_, after) = call_as(&app, &new_key, "/v1/recovery/status", &request_id).await;
+    assert_eq!(after["state"], "cancelled");
+    let (status, _) = call_as(&app, &new_key, "/v1/recovery/complete", &request_id).await;
+    assert_eq!(
+        status,
+        StatusCode::NOT_FOUND,
+        "a cancelled recovery must not complete"
+    );
+}
+
+#[tokio::test]
+async fn only_the_wallet_or_the_requester_may_cancel() {
+    let (app, _store, _current) = recovery_fixture(3600).await;
+    let new_key = device_key_of(38);
+    let stranger = device_key_of(39);
+    let (_, requested) = ask_to_recover(&app, &new_key).await;
+    let request_id = requested["request_id"].as_str().expect("id").to_owned();
+
+    let (status, _) = call_as(&app, &stranger, "/v1/recovery/cancel", &request_id).await;
+    assert_eq!(
+        status,
+        StatusCode::UNAUTHORIZED,
+        "a stranger must not cancel"
+    );
+
+    let (status, _) = call_as(&app, &new_key, "/v1/recovery/cancel", &request_id).await;
+    assert_eq!(status, StatusCode::NO_CONTENT, "the requester may withdraw");
+}
+
+#[tokio::test]
+async fn only_one_recovery_may_wait_at_a_time_and_completing_ends_the_others() {
+    let (app, store, _current) = recovery_fixture(0).await;
+    let first = device_key_of(60);
+    let second = device_key_of(61);
+    let (_, a) = ask_to_recover(&app, &first).await;
+    let a_id = a["request_id"].as_str().expect("id").to_owned();
+    let (_, b) = ask_to_recover(&app, &second).await;
+    let b_id = b["request_id"].as_str().expect("id").to_owned();
+    approve(&store, &a_id, &first).await;
+    approve(&store, &b_id, &second).await;
+
+    // Both are approved, but with a zero period the first is ready at once and the second is
+    // refused while the first is still cooling.
+    let (_, first_state) = call_as(&app, &first, "/v1/recovery/status", &a_id).await;
+    assert_eq!(first_state["state"], "ready");
+    let (status, body) = call_as(&app, &second, "/v1/recovery/status", &b_id).await;
+    assert_eq!(
+        status,
+        StatusCode::BAD_REQUEST,
+        "a second wait must be refused: {body}"
+    );
+
+    let (status, _) = call_as(&app, &first, "/v1/recovery/complete", &a_id).await;
+    assert_eq!(status, StatusCode::NO_CONTENT);
+
+    // The other request ended with it. Its own key can still ask, and is told so, but it cannot
+    // finish, and the wallet's key did not become its key.
+    let (status, ended) = call_as(&app, &second, "/v1/recovery/status", &b_id).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(
+        ended["state"], "cancelled",
+        "the losing request must have ended: {ended}"
+    );
+    let (status, _) = call_as(&app, &second, "/v1/recovery/complete", &b_id).await;
+    assert_eq!(
+        status,
+        StatusCode::NOT_FOUND,
+        "a request that lost must not complete"
+    );
+    let (status, _) = signed_post(
+        &app,
+        &second,
+        "/v1/recovery/pending",
+        json!({ "wallet_id": RECOVERY_WALLET }),
+        "loser",
+    )
+    .await;
+    assert_eq!(
+        status,
+        StatusCode::UNAUTHORIZED,
+        "the losing key must not speak for the wallet"
+    );
+}
+
+#[tokio::test]
+async fn recovery_status_needs_a_proof_from_the_requests_own_key() {
+    let (app, _store, current) = recovery_fixture(0).await;
+    let new_key = device_key_of(62);
+    let (_, requested) = ask_to_recover(&app, &new_key).await;
+    let request_id = requested["request_id"].as_str().expect("id").to_owned();
+
+    // No proof at all.
+    let (status, _) = post(
+        &app,
+        "/v1/recovery/status",
+        json!({ "wallet_id": RECOVERY_WALLET, "request_id": request_id }),
+    )
+    .await;
+    assert_eq!(status, StatusCode::UNAUTHORIZED);
+
+    // The wallet's current key is not the request's key.
+    let (status, _) = call_as(&app, &current, "/v1/recovery/status", &request_id).await;
+    assert_eq!(status, StatusCode::UNAUTHORIZED);
 }
