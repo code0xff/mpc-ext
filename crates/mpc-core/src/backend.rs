@@ -449,6 +449,32 @@ pub fn export_private_key(shares: &[&KeyShare]) -> Result<SecretKeyBytes> {
     Ok(SecretKeyBytes(key.to_bytes()))
 }
 
+/// Exports the private key, but only if it belongs to `expected`.
+///
+/// Reconstruction alone cannot tell a right share pair from a wrong one — shares from another
+/// wallet or another refresh epoch interpolate to a plausible but unrelated scalar. Handing that
+/// to a user as "your key" would be worse than failing, so the result is checked against the
+/// wallet's public key before it is returned.
+///
+/// # Danger
+///
+/// Same as [`export_private_key`].
+pub fn export_private_key_for(
+    shares: &[&KeyShare],
+    expected: &PublicKey,
+) -> Result<SecretKeyBytes> {
+    use elliptic_curve::sec1::ToSec1Point;
+
+    let key = reconstruct(shares)?;
+    let point = (k256::ProjectivePoint::GENERATOR * key.scalar).to_affine();
+    if point.to_sec1_point(true).as_bytes() != expected.0.as_slice() {
+        return Err(Error::Backend(
+            "these shares do not reconstruct this wallet's key".into(),
+        ));
+    }
+    Ok(SecretKeyBytes(key.to_bytes()))
+}
+
 /// Issues a fresh set of three shares from the surviving ones (reshare).
 ///
 /// Use it to fill the slot of a lost share on a new device. Upstream refresh only admits parties

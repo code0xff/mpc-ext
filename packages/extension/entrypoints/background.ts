@@ -6,7 +6,16 @@
  * (`docs/architecture.md`).
  */
 import * as approvals from '../src/approvals';
-import type { CreatedKey, Request, Response, Signed, Status, WasmHealth } from '../src/messages';
+import * as eventLog from '../src/eventLog';
+import type {
+  CreatedKey,
+  ExportedKey,
+  Request,
+  Response,
+  Signed,
+  Status,
+  WasmHealth,
+} from '../src/messages';
 import { handlePageRequest } from '../src/pageApi';
 import * as permissions from '../src/permissions';
 import { PARTY, runDkg, signWithRecoveryFile, signWithServer } from '../src/protocolRunner';
@@ -20,7 +29,7 @@ import {
 import { createDeviceKey, exportDevicePublicKey, storeDeviceKey } from '../src/deviceKey';
 import * as settings from '../src/settings';
 import * as vault from '../src/vault';
-import { ethereum_address, loadWasm, threshold_config } from '../src/wasm';
+import { ethereum_address, export_private_key, loadWasm, threshold_config } from '../src/wasm';
 
 /** The decrypted share A. Disappears with the worker, and is never persisted. */
 let unlockedShare: Uint8Array | undefined;
@@ -338,6 +347,50 @@ async function signOffline(digestHex: string, recoveryShareHex: string): Promise
   }
 }
 
+/**
+ * Reconstructs the full private key from the extension share and a recovery file.
+ *
+ * Only a wallet that still holds share A can do this. A restored wallet holds B, the same share
+ * the recovery file carries, and C never leaves the server, so there is no second share to
+ * combine. The password is checked again, and the result is verified against the wallet's public
+ * key so a wrong share pair fails rather than returning an unrelated key.
+ */
+async function exportPrivateKey(password: string, recoveryShareHex: string): Promise<ExportedKey> {
+  requireUnlocked();
+  if ((await vault.party()) !== PARTY.extension) {
+    throw new Error(
+      'This wallet was restored from a recovery file, so it has no second share to export with. Sign what you need and move the funds to a new wallet.',
+    );
+  }
+  const publicKeyHex = await vault.publicKeyHex();
+  if (!publicKeyHex) throw new Error('This wallet is not initialized.');
+
+  // Re-authenticate: an unlocked session alone must not be enough to take the key out.
+  const share = await vault.unlock(password);
+  if (!share) throw new Error('That password is not correct.');
+
+  await loadWasm();
+  const recoveryShare = fromHex(recoveryShareHex);
+  let key: Uint8Array | undefined;
+  try {
+    const exported = export_private_key(
+      share,
+      PARTY.extension,
+      recoveryShare,
+      PARTY.recovery,
+      fromHex(publicKeyHex),
+    );
+    key = exported;
+    // Log the fact of the export, never its value.
+    await eventLog.record('privateKeyExported');
+    return { privateKeyHex: toHex(exported) };
+  } finally {
+    wipe(share);
+    wipe(recoveryShare);
+    wipe(key);
+  }
+}
+
 async function handle(request: Request): Promise<unknown> {
   switch (request.type) {
     case 'status':
@@ -376,6 +429,8 @@ async function handle(request: Request): Promise<unknown> {
         request.publicKeyHex,
         request.recoveryShareHex,
       );
+    case 'exportPrivateKey':
+      return exportPrivateKey(request.password, request.recoveryShareHex);
     case 'readSettings':
       return settings.read();
     case 'setServerUrl':
