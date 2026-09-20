@@ -43,7 +43,7 @@
 - [x] Recovery flow (B+C) — import the recovery file and sign again, verified in the smoke test
 - [x] Decide the distributed reshare design ([adr/0007](adr/0007-distributed-reshare.md))
 - [x] Distributed reshare: `mpc-core` session, server staging and commit, extension flow (`recovery.md`)
-- [ ] Run the reshare against the real extension in the MV3 smoke test (needs passkey support in the test)
+- [x] Run the reshare against the real extension in the MV3 smoke test, with a virtual authenticator for the passkey ceremonies
 - [x] Make the server URL configurable, for self-hosting
 - [x] Settle the server authentication design ([adr/0006](adr/0006-server-authentication.md))
 - [x] Decide the WebAuthn ceremony location: server-origin ceremony (ADR-0006)
