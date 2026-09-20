@@ -15,7 +15,7 @@ use serde::{Deserialize, Serialize};
 use utoipa::{OpenApi, ToSchema};
 use utoipa_swagger_ui::SwaggerUi;
 
-use crate::auth::authenticate;
+use crate::auth::{authenticate, SignedJson};
 use crate::auth_page;
 use crate::crypto::SealingKey;
 use crate::passkey::{self, PasskeyConfig};
@@ -351,7 +351,10 @@ pub enum AdvancedSign {
 async fn start_sign(
     State(state): State<AppState>,
     headers: HeaderMap,
-    Json(request): Json<StartSign>,
+    SignedJson {
+        value: request,
+        raw,
+    }: SignedJson<StartSign>,
 ) -> Result<Json<StartedSign>, ApiError> {
     authenticate(
         &state.store,
@@ -359,7 +362,7 @@ async fn start_sign(
         "POST",
         "/v1/sign/session",
         &request.wallet_id,
-        &request,
+        &raw,
     )
     .await?;
     let sign_id = parse_hex32(&request.sign_id, "sign_id")?;
@@ -425,7 +428,10 @@ async fn start_sign(
 async fn advance_sign(
     State(state): State<AppState>,
     headers: HeaderMap,
-    Json(request): Json<AdvanceSign>,
+    SignedJson {
+        value: request,
+        raw,
+    }: SignedJson<AdvanceSign>,
 ) -> Result<Json<AdvancedSign>, ApiError> {
     authenticate(
         &state.store,
@@ -433,7 +439,7 @@ async fn advance_sign(
         "POST",
         "/v1/sign/round",
         &request.wallet_id,
-        &request,
+        &raw,
     )
     .await?;
     let sealed = state

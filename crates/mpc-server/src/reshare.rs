@@ -19,7 +19,7 @@ use utoipa::ToSchema;
 use crate::api::{
     hex, parse_hex32, ApiError, AppState, WireEnvelope, SERVER_PARTY, SESSION_TTL_SECONDS,
 };
-use crate::auth::authenticate;
+use crate::auth::{authenticate, SignedJson};
 use crate::Error;
 
 /// How long a finished reshare waits for its commit. The user has to save a new recovery file in
@@ -117,7 +117,10 @@ fn to_public_key(bytes: &[u8]) -> Result<PublicKey, Error> {
 pub async fn start(
     State(state): State<AppState>,
     headers: HeaderMap,
-    Json(request): Json<StartReshare>,
+    SignedJson {
+        value: request,
+        raw,
+    }: SignedJson<StartReshare>,
 ) -> Result<Json<StartedReshare>, ApiError> {
     authenticate(
         &state.store,
@@ -125,7 +128,7 @@ pub async fn start(
         "POST",
         "/v1/reshare/session",
         &request.wallet_id,
-        &request,
+        &raw,
     )
     .await?;
     let reshare_id = parse_hex32(&request.reshare_id, "reshare_id")?;
@@ -192,7 +195,10 @@ pub async fn start(
 pub async fn advance(
     State(state): State<AppState>,
     headers: HeaderMap,
-    Json(request): Json<AdvanceReshare>,
+    SignedJson {
+        value: request,
+        raw,
+    }: SignedJson<AdvanceReshare>,
 ) -> Result<Json<AdvancedReshare>, ApiError> {
     authenticate(
         &state.store,
@@ -200,7 +206,7 @@ pub async fn advance(
         "POST",
         "/v1/reshare/round",
         &request.wallet_id,
-        &request,
+        &raw,
     )
     .await?;
     let sealed = state
@@ -279,7 +285,10 @@ pub async fn advance(
 pub async fn commit(
     State(state): State<AppState>,
     headers: HeaderMap,
-    Json(request): Json<FinishReshare>,
+    SignedJson {
+        value: request,
+        raw,
+    }: SignedJson<FinishReshare>,
 ) -> Result<StatusCode, ApiError> {
     authenticate(
         &state.store,
@@ -287,7 +296,7 @@ pub async fn commit(
         "POST",
         "/v1/reshare/commit",
         &request.wallet_id,
-        &request,
+        &raw,
     )
     .await?;
     parse_hex32(&request.reshare_id, "reshare_id")?;
@@ -312,7 +321,10 @@ pub async fn commit(
 pub async fn abort(
     State(state): State<AppState>,
     headers: HeaderMap,
-    Json(request): Json<FinishReshare>,
+    SignedJson {
+        value: request,
+        raw,
+    }: SignedJson<FinishReshare>,
 ) -> Result<StatusCode, ApiError> {
     authenticate(
         &state.store,
@@ -320,7 +332,7 @@ pub async fn abort(
         "POST",
         "/v1/reshare/abort",
         &request.wallet_id,
-        &request,
+        &raw,
     )
     .await?;
     parse_hex32(&request.reshare_id, "reshare_id")?;

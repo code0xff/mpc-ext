@@ -28,7 +28,7 @@ use webauthn_rp::{
 };
 
 use crate::api::{ApiError, AppState};
-use crate::auth::authenticate;
+use crate::auth::{authenticate, SignedJson};
 use crate::Error;
 
 const CEREMONY_TTL_SECONDS: i64 = 300;
@@ -173,12 +173,7 @@ pub struct HandoffRequest {
     pub wallet_id: String,
     /// `register`, `sign`, or `recovery`.
     pub purpose: String,
-    // Left out when absent. The device proof covers the serialized body, and the extension's
-    // `JSON.stringify` drops `undefined`, so a `null` here would change the bytes the server
-    // checks against what the client signed (a `register` handoff has neither field).
-    #[serde(skip_serializing_if = "Option::is_none")]
     pub operation_id: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
     pub digest: Option<String>,
 }
 
@@ -263,7 +258,10 @@ fn validate_handoff_request(request: &HandoffRequest) -> Result<(), ApiError> {
 pub async fn handoff(
     State(state): State<AppState>,
     headers: HeaderMap,
-    Json(request): Json<HandoffRequest>,
+    SignedJson {
+        value: request,
+        raw,
+    }: SignedJson<HandoffRequest>,
 ) -> Result<Json<HandoffResponse>, ApiError> {
     authenticate(
         &state.store,
@@ -271,7 +269,7 @@ pub async fn handoff(
         "POST",
         "/v1/passkeys/handoff",
         &request.wallet_id,
-        &request,
+        &raw,
     )
     .await?;
     validate_handoff_request(&request)?;
@@ -328,7 +326,10 @@ pub async fn handoff(
 pub async fn ceremony_status(
     State(state): State<AppState>,
     headers: HeaderMap,
-    Json(request): Json<CeremonyStatusRequest>,
+    SignedJson {
+        value: request,
+        raw,
+    }: SignedJson<CeremonyStatusRequest>,
 ) -> Result<Json<CeremonyStatusResponse>, ApiError> {
     authenticate(
         &state.store,
@@ -336,7 +337,7 @@ pub async fn ceremony_status(
         "POST",
         "/v1/passkeys/ceremony/status",
         &request.wallet_id,
-        &request,
+        &raw,
     )
     .await?;
     validate_wallet_id(&request.wallet_id)?;
@@ -654,7 +655,10 @@ pub async fn verify_assertion(
 pub async fn register_options(
     State(state): State<AppState>,
     headers: HeaderMap,
-    Json(request): Json<RegisterOptionsRequest>,
+    SignedJson {
+        value: request,
+        raw,
+    }: SignedJson<RegisterOptionsRequest>,
 ) -> Result<Json<RegisterOptionsResponse>, ApiError> {
     authenticate(
         &state.store,
@@ -662,7 +666,7 @@ pub async fn register_options(
         "POST",
         "/v1/passkeys/register/options",
         &request.wallet_id,
-        &request,
+        &raw,
     )
     .await?;
     validate_wallet_id(&request.wallet_id)?;
@@ -682,7 +686,10 @@ pub async fn register_options(
 pub async fn register_finish(
     State(state): State<AppState>,
     headers: HeaderMap,
-    Json(request): Json<RegisterFinishRequest>,
+    SignedJson {
+        value: request,
+        raw,
+    }: SignedJson<RegisterFinishRequest>,
 ) -> Result<axum::http::StatusCode, ApiError> {
     authenticate(
         &state.store,
@@ -690,7 +697,7 @@ pub async fn register_finish(
         "POST",
         "/v1/passkeys/register/finish",
         &request.wallet_id,
-        &request,
+        &raw,
     )
     .await?;
     validate_wallet_id(&request.wallet_id)?;
@@ -774,7 +781,10 @@ pub async fn register_finish(
 pub async fn assert_options(
     State(state): State<AppState>,
     headers: HeaderMap,
-    Json(request): Json<AssertOptionsRequest>,
+    SignedJson {
+        value: request,
+        raw,
+    }: SignedJson<AssertOptionsRequest>,
 ) -> Result<Json<AssertOptionsResponse>, ApiError> {
     authenticate(
         &state.store,
@@ -782,7 +792,7 @@ pub async fn assert_options(
         "POST",
         "/v1/passkeys/assert/options",
         &request.wallet_id,
-        &request,
+        &raw,
     )
     .await?;
     validate_assertion_binding(&request)?;
@@ -838,7 +848,10 @@ pub async fn assert_options(
 pub async fn assert_finish(
     State(state): State<AppState>,
     headers: HeaderMap,
-    Json(request): Json<AssertFinishRequest>,
+    SignedJson {
+        value: request,
+        raw,
+    }: SignedJson<AssertFinishRequest>,
 ) -> Result<Json<AssertFinishResponse>, ApiError> {
     authenticate(
         &state.store,
@@ -846,7 +859,7 @@ pub async fn assert_finish(
         "POST",
         "/v1/passkeys/assert/finish",
         &request.wallet_id,
-        &request,
+        &raw,
     )
     .await?;
     validate_assertion_finish(&request)?;

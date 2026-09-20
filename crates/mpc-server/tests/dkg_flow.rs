@@ -482,12 +482,11 @@ async fn browser_handoff_uses_a_body_token_and_scoped_cookie() {
     assert_eq!(replay.status(), StatusCode::UNAUTHORIZED);
 }
 
-/// The extension signs the text `JSON.stringify` produces, which leaves out `undefined` fields.
-/// Building the signature from a typed round trip, as `device_headers` does, hides any mismatch
-/// between that text and what the server re-serializes, and a `register` handoff (no operation
-/// id, no digest) was rejected in real use for exactly that reason.
+/// The extension signs the text `JSON.stringify` produces and sends that same text. A `register`
+/// handoff (no operation id, no digest) was once rejected because the server checked a
+/// re-serialization instead, which wrote `null` for the missing fields.
 #[tokio::test]
-async fn register_handoff_accepts_the_exact_body_the_extension_signs() {
+async fn signed_requests_are_verified_over_the_exact_bytes_sent() {
     let app = test_app().await;
     let device_key = SigningKey::from_bytes((&[23u8; 32]).into()).expect("device key");
     let public_key = hex_of(
@@ -504,37 +503,35 @@ async fn register_handoff_accepts_the_exact_body_the_extension_signs() {
     .await;
     assert_eq!(status, StatusCode::NO_CONTENT);
 
-    // Exactly what `JSON.stringify({ wallet_id, purpose, operation_id: undefined, digest: undefined })`
-    // yields.
+    // Exactly what `JSON.stringify({ wallet_id, purpose, operation_id: undefined, ... })` yields.
     let sent = r#"{"wallet_id":"wallet-js","purpose":"register"}"#;
-    let timestamp = time::OffsetDateTime::now_utc().unix_timestamp_nanos() / 1_000_000;
-    let message = format!("POST\n/v1/passkeys/handoff\n{timestamp}\njs-nonce\n{sent}");
-    let signature: p256::ecdsa::Signature = device_key.sign(message.as_bytes());
-    let mut headers = HeaderMap::new();
-    headers.insert(
-        "x-device-timestamp",
-        HeaderValue::from_str(&timestamp.to_string()).expect("timestamp header"),
-    );
-    headers.insert("x-device-nonce", HeaderValue::from_static("js-nonce"));
-    headers.insert(
-        "x-device-signature",
-        HeaderValue::from_str(
-            &base64::engine::general_purpose::STANDARD.encode(signature.to_bytes()),
-        )
-        .expect("signature header"),
-    );
-
-    let (status, body) = post_with_headers(
+    let (status, body) = post_text(
         &app,
         "/v1/passkeys/handoff",
-        serde_json::from_str(sent).expect("the body is JSON"),
-        headers,
+        sent,
+        device_headers_for_text("/v1/passkeys/handoff", sent, &device_key, "js-exact"),
     )
     .await;
     assert_eq!(
         status,
         StatusCode::OK,
-        "a register handoff signed over the extension's exact text must be accepted: {body}"
+        "the exact text must be accepted: {body}"
+    );
+
+    // The same fields with different spacing are different bytes, so a proof for one text must
+    // not validate the other, whatever the parsed value.
+    let spaced = r#"{ "wallet_id": "wallet-js", "purpose": "register" }"#;
+    let (status, _) = post_text(
+        &app,
+        "/v1/passkeys/handoff",
+        spaced,
+        device_headers_for_text("/v1/passkeys/handoff", sent, &device_key, "js-spaced"),
+    )
+    .await;
+    assert_eq!(
+        status,
+        StatusCode::UNAUTHORIZED,
+        "a proof over other bytes must be refused"
     );
 }
 
@@ -590,6 +587,16 @@ async fn post_with_headers(
     body: Value,
     headers: HeaderMap,
 ) -> (StatusCode, Value) {
+    post_text(app, path, &body.to_string(), headers).await
+}
+
+/// Sends `text` byte for byte, which is what a signed request has to do.
+async fn post_text(
+    app: &axum::Router,
+    path: &str,
+    text: &str,
+    headers: HeaderMap,
+) -> (StatusCode, Value) {
     let mut request = Request::builder()
         .method("POST")
         .uri(path)
@@ -601,7 +608,7 @@ async fn post_with_headers(
         .clone()
         .oneshot(
             request
-                .body(Body::from(body.to_string()))
+                .body(Body::from(text.to_owned()))
                 .expect("the request should build"),
         )
         .await
@@ -615,66 +622,16 @@ async fn post_with_headers(
     (status, value)
 }
 
+/// Signs the body exactly as `post_with_headers` will send it. The server verifies the received
+/// bytes, so a helper that re-serialized through a typed struct would only hide mismatches.
 fn device_headers(path: &str, body: &Value, key: &SigningKey, nonce: &str) -> HeaderMap {
+    device_headers_for_text(path, &body.to_string(), key, nonce)
+}
+
+/// Signs `text` as the body of a request to `path`.
+fn device_headers_for_text(path: &str, text: &str, key: &SigningKey, nonce: &str) -> HeaderMap {
     let timestamp = time::OffsetDateTime::now_utc().unix_timestamp_nanos() / 1_000_000;
-    let serialized = match path {
-        "/v1/sign/session" => serde_json::to_string(
-            &serde_json::from_value::<mpc_server::api::StartSign>(body.clone())
-                .expect("start body should deserialize"),
-        )
-        .expect("start body should serialize"),
-        "/v1/sign/round" => serde_json::to_string(
-            &serde_json::from_value::<mpc_server::api::AdvanceSign>(body.clone())
-                .expect("round body should deserialize"),
-        )
-        .expect("round body should serialize"),
-        "/v1/passkeys/register/options" => serde_json::to_string(
-            &serde_json::from_value::<mpc_server::passkey::RegisterOptionsRequest>(body.clone())
-                .expect("register options body should deserialize"),
-        )
-        .expect("register options body should serialize"),
-        "/v1/passkeys/register/finish" => serde_json::to_string(
-            &serde_json::from_value::<mpc_server::passkey::RegisterFinishRequest>(body.clone())
-                .expect("register finish body should deserialize"),
-        )
-        .expect("register finish body should serialize"),
-        "/v1/passkeys/assert/options" => serde_json::to_string(
-            &serde_json::from_value::<mpc_server::passkey::AssertOptionsRequest>(body.clone())
-                .expect("assert options body should deserialize"),
-        )
-        .expect("assert options body should serialize"),
-        "/v1/passkeys/assert/finish" => serde_json::to_string(
-            &serde_json::from_value::<mpc_server::passkey::AssertFinishRequest>(body.clone())
-                .expect("assert finish body should deserialize"),
-        )
-        .expect("assert finish body should serialize"),
-        "/v1/passkeys/handoff" => serde_json::to_string(
-            &serde_json::from_value::<mpc_server::passkey::HandoffRequest>(body.clone())
-                .expect("handoff body should deserialize"),
-        )
-        .expect("handoff body should serialize"),
-        "/v1/passkeys/ceremony/status" => serde_json::to_string(
-            &serde_json::from_value::<mpc_server::passkey::CeremonyStatusRequest>(body.clone())
-                .expect("status body should deserialize"),
-        )
-        .expect("status body should serialize"),
-        "/v1/reshare/session" => serde_json::to_string(
-            &serde_json::from_value::<mpc_server::reshare::StartReshare>(body.clone())
-                .expect("reshare start body should deserialize"),
-        )
-        .expect("reshare start body should serialize"),
-        "/v1/reshare/round" => serde_json::to_string(
-            &serde_json::from_value::<mpc_server::reshare::AdvanceReshare>(body.clone())
-                .expect("reshare round body should deserialize"),
-        )
-        .expect("reshare round body should serialize"),
-        "/v1/reshare/commit" | "/v1/reshare/abort" => serde_json::to_string(
-            &serde_json::from_value::<mpc_server::reshare::FinishReshare>(body.clone())
-                .expect("reshare finish body should deserialize"),
-        )
-        .expect("reshare finish body should serialize"),
-        _ => serde_json::to_string(body).expect("body should serialize"),
-    };
+    let serialized = text;
     let message = format!("POST\n{path}\n{timestamp}\n{nonce}\n{serialized}");
     let signature: p256::ecdsa::Signature = key.sign(message.as_bytes());
     let mut headers = HeaderMap::new();
