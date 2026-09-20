@@ -111,6 +111,9 @@ const browser = await puppeteer.launch({
     `--load-extension=${EXTENSION}`,
     '--no-first-run',
     '--no-default-browser-check',
+    // GitHub's Ubuntu runners block unprivileged user namespaces through AppArmor, so Chrome's
+    // sandbox cannot start. The runner is a throwaway VM and the page under test is our own.
+    ...(process.env.CI ? ['--no-sandbox'] : []),
   ],
 });
 
