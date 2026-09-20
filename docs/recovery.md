@@ -47,17 +47,18 @@ recovered wallet is for spending, not for continuing to live in.
 
 The UI must say this plainly. It must not present a recovered wallet as fully restored.
 
-### The real fix
+### The fix: a distributed reshare
 
-A **distributed reshare** protocol — where B and C jointly issue a fresh set of three shares
-without either leaving its home — solves all of it. Upstream does not implement one. Options, in
-order of preference:
+[ADR-0007](adr/0007-distributed-reshare.md) settles the design. B and C run a DKG in which each
+contributes its Lagrange-weighted share as the constant term, and a fresh A' joins on the new
+device. C never leaves the server and is replaced by C' only after the user has saved the new
+recovery file. The address stays the same.
 
-1. Contribute a reshare protocol upstream, or implement one against `mpc-core`.
-2. Switch to a library that has one, if an audited permissive option appears
-   ([adr/0004](adr/0004-mpc-library-reselection.md), mitigation 6).
+Two limits remain, both stated in the ADR. The new device can compute the key while the ceremony
+runs, exactly as it can at key creation. And the lost share A stays dangerous for anyone who
+also holds the **old** recovery file, so the user must destroy it.
 
-Until then this limitation is a priority item for the external audit and for the roadmap.
+Until the reshare ships, the advice above stands.
 
 ## Scenario 2 — device and recovery file both lost
 
