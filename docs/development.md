@@ -49,10 +49,15 @@ Three details are worth knowing when it breaks:
 - The script attaches the authenticator after the extension has opened the tab, so it can lose a
   race against the ceremony page. Chrome does not fail a WebAuthn call made before an
   authenticator exists. It waits, and an authenticator added later is not used for that call, so
-  the ceremony hangs with no error and no server log. The script reloads the page once the
-  authenticator is attached, and again if the page reports a failure or waits too long, and prints
-  a `[ceremony]` line each time. The server gives out the same options again for the same
-  ceremony, so reloading is safe. A `[ceremony]` line is normal. Many of them in a row are not.
+  the ceremony hangs with no error and no server log.
+- The script reloads the page in only two cases: it has waited for the authenticator prompt for
+  three seconds, or the browser itself refused the call. Both happen before anything reaches the
+  server. It must never reload otherwise. The challenge is consumed the moment the server checks an
+  assertion, so a reload after that fails every time with "no live challenge", and a reload that
+  cuts a healthy ceremony short causes exactly that failure. It also never reloads on
+  "authentication failed", which is the server's own verdict.
+- Each reload prints a `[ceremony]` line. A normal run prints none. Any line means the race
+  happened, and many in a row mean something else is wrong.
 - `SMOKE_DEBUG=1` prints each tab, HTTP status and credential event, which is usually enough to
   find where a ceremony stopped.
 
