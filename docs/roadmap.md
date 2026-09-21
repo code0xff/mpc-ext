@@ -56,7 +56,8 @@
 - [x] Recovery start needs a passkey assertion and a cooling-off wait, and the device key can be
       replaced only through it ([adr/0008](adr/0008-recovery-start-and-device-key-replacement.md))
 - [x] Device proof over the exact request bytes
-- [ ] Cancel a recovery with the passkey, and look up waiting recoveries from a fresh browser
+- [x] Cancel a recovery with the passkey, and look up waiting recoveries from a fresh browser (`/manage`, [adr/0009](adr/0009-managing-recoveries-with-the-passkey.md))
+- [ ] Tell the owner when a recovery starts. Needs a channel the design does not have (no accounts, no email)
 - [x] Register a passkey after key creation: a card asks the server whether the wallet has one and offers to register it, and signing through the server explains why it is refused until then
 
 ## Phase 4 — web integration

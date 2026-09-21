@@ -1,6 +1,6 @@
 # ADR-0009: Seeing and cancelling a recovery with the passkey alone
 
-- Status: accepted; implementation in progress
+- Status: accepted; implemented
 - Date: 2026-09-21
 
 ## Context

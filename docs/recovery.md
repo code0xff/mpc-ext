@@ -108,9 +108,16 @@ The server share C alone cannot sign. **This case is unrecoverable.**
 - **Objection.** There is no email or phone by design, so nothing pushes a notice. The extension
   asks the server whenever it is unlocked and shows any recovery that is waiting, with the
   requesting key's fingerprint and a cancel button. The requester can also withdraw.
-- **The gap this leaves.** A user whose device is gone, and whose passkey is misused, gets the wait
-  but no warning. Cancelling with the passkey, and looking up waiting recoveries from a fresh
-  browser, are deferred (`roadmap.md`).
+- **From any browser, with only the passkey.** The server's own page at `/manage` identifies the
+  wallet from the passkey itself, so there is no wallet id to type or to guess. One assertion opens a
+  five minute session that lists what is waiting and cancels it
+  ([adr/0009](adr/0009-managing-recoveries-with-the-passkey.md)). This is the way back for someone
+  whose device is gone. The new device's waiting screen points to it, and the extension's settings
+  and the recovery file's header carry the server address.
+- **The gap this still leaves.** Nothing tells the owner. There is no email or phone by design, so a
+  recovery that nobody looks for completes after the wait. Anyone who holds the passkey can also
+  cancel, including a recovery the owner started, which costs the owner a restart and nothing
+  more.
 - Every step (requested, cooling, cancelled, completed) is written to the audit log, never with
   shares or keys.
 
@@ -118,6 +125,8 @@ The server share C alone cannot sign. **This case is unrecoverable.**
 
 - Signing succeeds for all three pairings: A+C (everyday), A+B (server down), B+C (device lost).
 - Aborting recovery leaves the previous shares valid (rollback safety).
+- A passkey shows and cancels only its own wallet's recoveries. The management page has no way to
+  name a wallet, so this is checked with two wallets on one server in the browser smoke test.
 - A recovery does not replace the device key before the passkey has approved it and the wait is
   over, an approval for one key does not start another's wait, and a cancelled request cannot
   complete (`mpc-server` tests, and the MV3 smoke test end to end).

@@ -42,7 +42,16 @@ export function RecoverPanel({ onRecovered }: { onRecovered: (status: Status) =>
   const [password, setPassword] = useState('');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string>();
+  const [manageUrl, setManageUrl] = useState<string>();
   const input = useRef<HTMLInputElement>(null);
+
+  // Where a waiting recovery can be seen and cancelled from any browser, with only the passkey
+  // (docs/adr/0009-managing-recoveries-with-the-passkey.md).
+  useEffect(() => {
+    void send<{ serverUrl: string }>({ type: 'readSettings' })
+      .then((settings) => setManageUrl(`${settings.serverUrl}/manage`))
+      .catch(() => undefined);
+  }, []);
 
   const phase = progress.phase;
 
@@ -208,6 +217,10 @@ export function RecoverPanel({ onRecovered }: { onRecovered: (status: Status) =>
             and come back then.
           </p>
           <p>If you did not start this, cancel it.</p>
+          <p id="manage-hint">
+            The owner of this wallet can also see and cancel it from any browser with their passkey,
+            at <span className="mono">{manageUrl ?? 'the server address + /manage'}</span>.
+          </p>
           <button type="button" className="quiet" disabled={busy} onClick={() => void cancel()}>
             Cancel the recovery
           </button>

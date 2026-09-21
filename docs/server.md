@@ -210,3 +210,30 @@ authenticator does. What is lost is the authenticator's own second layer of that
 This also keeps the test browser honest. Chrome's virtual authenticator cannot satisfy an enforced
 credProtect at any setting, so the smoke test used to strip the flag from the page. It now runs the
 options the server actually sends.
+
+## The management page
+
+`GET /manage` serves a page that lists and cancels the recoveries waiting on a wallet, using only the
+wallet's passkey ([adr/0009](adr/0009-managing-recoveries-with-the-passkey.md)). It has no login and
+no wallet id.
+
+| Endpoint                     | What it does                                                                 |
+| ---------------------------- | ---------------------------------------------------------------------------- |
+| `GET  /manage`, `/manage.js` | The page and its script, with the same `no-store` and CSP headers as `/auth` |
+| `GET  /manage/challenge`     | A usernameless assertion challenge. Needs no proof and names no wallet       |
+| `POST /manage/session`       | Verifies the assertion, opens a session, returns what is waiting             |
+| `POST /manage/cancel`        | Cancels one recovery on the session's wallet                                 |
+
+- **The wallet comes from the passkey.** The response carries the passkey's user handle, 64 random
+  bytes chosen at registration and indexed in `passkey_credentials.user_handle`. Credentials that
+  predate the column are indexed when the server starts. A handle that matches no wallet fails
+  exactly like a bad signature, so the page cannot be used to ask which passkeys exist.
+- **One verifier.** The assertion is checked by the same function as every signature and recovery
+  (`verify_and_advance`): relying party, origin, signature, a counter that moves forward, and user
+  verification.
+- **The session** is an HttpOnly, `SameSite=Strict` cookie scoped to `/manage`, valid five minutes.
+  Only a SHA-256 of the token is stored.
+- **Cancel needs the cookie and the page's own origin** in the `Origin` header, so another site
+  cannot cause a cancel with the user's cookie.
+- **The challenge endpoint is bounded.** It takes no proof, so at most 200 challenges may be waiting
+  and the 201st gets `429`. They live five minutes.
