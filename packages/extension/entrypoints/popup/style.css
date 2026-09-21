@@ -34,7 +34,10 @@
 }
 
 body {
+  /* A fixed width is a trap: when the popup scrolls, a classic scrollbar takes its width from the
+     viewport and the fixed body then hangs off the right. Ask for a width and let it shrink. */
   width: 22rem;
+  max-width: 100%;
   margin: 0;
   padding: 1rem;
   background: var(--ground);
