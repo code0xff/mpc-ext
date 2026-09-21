@@ -47,7 +47,8 @@ export function App() {
   useEffect(() => {
     void send<RecoveryProgress>({ type: 'recoveryProgress' })
       .then((progress) => {
-        if (progress.phase !== 'idle' && progress.phase !== 'ended') setRestoring(true);
+        // 'ended' counts too: a cancelled or expired recovery has to say so, not vanish.
+        if (progress.phase !== 'idle') setRestoring(true);
       })
       .catch(() => undefined);
     void readPasskeySkipped().then(setPasskeySkipped);
