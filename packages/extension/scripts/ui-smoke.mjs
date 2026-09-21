@@ -121,8 +121,9 @@ async function openPopup(browser, popupUrl) {
   const page = await browser.newPage();
   page.on('pageerror', (error) => console.error(`[popup error] ${error.message}`));
   await page.goto(popupUrl);
-  // A blank page is a failure, and the popup once was one.
-  await seeText(page, 'MPC engine');
+  // A blank page is a failure, and the popup once was one. The header is the one thing every
+  // state shows; the status card is hidden during onboarding.
+  await seeText(page, 'Unaudited');
   return page;
 }
 
@@ -208,7 +209,9 @@ async function createWallet(page, downloadsRoot) {
   await click(page, '#download-recovery');
   const file = await waitForDownload(downloads);
   await click(page, '#confirm-recovery');
-  await seeText(page, 'Unlocked');
+  // The wallet is live once onboarding moves on: either to the passkey step, or straight to the
+  // dashboard when the wallet already has one.
+  await see(page, '#passkey-card, #wallet-status');
   return file;
 }
 
@@ -220,6 +223,10 @@ async function createWallet(page, downloadsRoot) {
  * to be disabled because of the missing passkey alone.
  */
 async function registerPasskey(page, digest) {
+  // The passkey is the last onboarding step, and it can be left until later. Skipping it puts the
+  // card among the others, which is also where the guard on the sign button can be seen.
+  await see(page, '#onboarding-step');
+  await click(page, '#skip-passkey');
   await see(page, '#passkey-card');
   await type(page, '#digest', digest);
   if (!(await isDisabled(page, '#sign'))) {
@@ -251,7 +258,7 @@ async function loseTheDevice(page) {
     });
   });
   await page.reload();
-  await seeText(page, 'MPC engine');
+  await seeText(page, 'Unaudited');
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -297,6 +304,8 @@ async function scenarioA() {
 
     // Lose the device and restore from the file. The new install has to be approved and wait.
     await loseTheDevice(page);
+    // Restoring is behind a link now, because creating a wallet is the common case.
+    await click(page, '#restore-instead');
     await see(page, '#begin-recovery');
     if (!(await isDisabled(page, '#begin-recovery'))) {
       throw new Error('a recovery can start before a recovery file is chosen');
@@ -399,6 +408,8 @@ async function scenarioB() {
 
     // The new device starts a recovery from the recovery file.
     const fresh = await openPopup(newDevice.browser, newDevice.popupUrl);
+    // Restoring is behind a link now, because creating a wallet is the common case.
+    await click(fresh, '#restore-instead');
     await see(fresh, '#begin-recovery');
     await setServer(fresh);
     await chooseFile(fresh, recoveryFile, '#pick-recovery');
@@ -514,6 +525,8 @@ async function scenarioC() {
 
     // Someone with the recovery file asks to take over from a new device.
     const fresh = await openPopup(newDevice.browser, newDevice.popupUrl);
+    // Restoring is behind a link now, because creating a wallet is the common case.
+    await click(fresh, '#restore-instead');
     await see(fresh, '#begin-recovery');
     await setServer(fresh);
     await chooseFile(fresh, recoveryFile, '#pick-recovery');

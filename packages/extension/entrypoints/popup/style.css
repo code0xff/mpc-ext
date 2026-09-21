@@ -196,3 +196,12 @@ button:disabled {
   margin-top: 0;
   flex: none;
 }
+
+.steps {
+  margin: 0;
+  font-size: 0.8rem;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  color: var(--ink-2);
+  text-transform: uppercase;
+}

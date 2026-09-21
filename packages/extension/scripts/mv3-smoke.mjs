@@ -35,13 +35,13 @@ try {
   // fails to render (the build once produced `React is not defined` and a blank page) would pass
   // every check below. Check that the UI actually appears.
   await page
-    .waitForFunction(() => document.body.innerText.includes('Wallet'), { timeout: 15_000 })
+    .waitForFunction(() => document.body.innerText.includes('Unaudited'), { timeout: 15_000 })
     .catch(() => undefined);
   const drawn = await page.evaluate(() => document.body.innerText.replace(/\s+/g, ' ').trim());
   if (popupErrors.length > 0) {
     throw new Error(`the popup threw while rendering: ${popupErrors.join('; ')}`);
   }
-  if (!drawn.includes('Wallet') || !drawn.includes('MPC engine')) {
+  if (!drawn.includes('Unaudited') || !drawn.includes('Create a key')) {
     throw new Error(`the popup did not render. It shows: "${drawn.slice(0, 120)}"`);
   }
   console.log('popup rendered:', drawn.slice(0, 60) + '…');
