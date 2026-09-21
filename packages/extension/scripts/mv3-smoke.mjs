@@ -292,15 +292,22 @@ try {
     const confirmed = await expect({ type: 'confirmRecoverySaved' }, 'recovery confirmation');
     if (confirmed.kind !== 'unlocked') throw new Error(`expected unlocked: ${confirmed.kind}`);
 
-    // Register the passkey that every later signature will need. The extension opens a tab on
-    // the server's origin, and the virtual authenticator answers the ceremony there.
-    const registration = await expect({ type: 'registerPasskey' }, 'passkey registration');
+    // A new wallet has no passkey, and every signature through the server needs one. Signing
+    // has to fail and say why, not just "authentication failed".
+    const passkeyBefore = await expect({ type: 'passkeyState' }, 'passkey state');
+    if (passkeyBefore.registered) throw new Error('a new wallet already has a passkey');
+    const premature = await send({ type: 'sign', digestHex: 'ab'.repeat(32) });
+    if (premature.ok) throw new Error('signed through the server without a passkey');
+    if (!/passkey/i.test(premature.error)) {
+      throw new Error(`the error does not mention the passkey: ${premature.error}`);
+    }
+
+    // Register it. The extension opens a tab on the server's origin, the virtual authenticator
+    // answers there, and the server is then the one to say the wallet has a passkey.
+    await expect({ type: 'registerPasskey' }, 'passkey registration');
     await within('the passkey registration', 30_000, async () => {
-      const ceremony = await expect(
-        { type: 'passkeyStatus', ceremonyId: registration.ceremonyId },
-        'passkey registration status',
-      );
-      return ceremony.status === 'completed';
+      const state = await expect({ type: 'passkeyState' }, 'passkey state');
+      return state.registered;
     });
 
     // Lock, reject the wrong password, then unlock with the right one.

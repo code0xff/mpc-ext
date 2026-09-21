@@ -10,6 +10,7 @@ import * as eventLog from '../src/eventLog';
 import type {
   CreatedKey,
   ExportedKey,
+  PasskeyState,
   PendingRecoveryInfo,
   RecoveryProgress,
   Request,
@@ -37,6 +38,7 @@ import {
   completeRecovery,
   health as serverHealth,
   passkeyCeremonyStatus,
+  passkeyRegistered,
   pendingRecoveries,
   recoveryStatus,
   registerDeviceKey,
@@ -413,6 +415,38 @@ async function startPasskey(
   return { ceremonyId: handoff.ceremony_id };
 }
 
+/** The tab a passkey registration opened, so it can be closed once the server has the passkey. */
+let registrationTabId: number | undefined;
+
+/** Starts registering the wallet's passkey. */
+async function registerPasskeyCeremony(): Promise<{ ceremonyId: string }> {
+  const started = await startPasskey('register');
+  registrationTabId = pendingPasskey?.tabId;
+  return started;
+}
+
+/**
+ * Whether the wallet has a passkey, from the server. A wallet restored onto a new device already
+ * has one and a new wallet does not, so this install cannot keep its own flag. Once the passkey is
+ * there, the tab that registered it is closed.
+ */
+async function passkeyState(): Promise<PasskeyState> {
+  const walletId = await vault.walletId();
+  if (!walletId) throw new Error('This wallet is not initialized.');
+  try {
+    const registered = await passkeyRegistered(await settings.serverUrl(), walletId);
+    if (registered && registrationTabId !== undefined) {
+      const tabId = registrationTabId;
+      registrationTabId = undefined;
+      await chrome.tabs.remove(tabId).catch(() => undefined);
+    }
+    return { registered, reachable: true };
+  } catch (error) {
+    if (error instanceof ServerUnreachable) return { registered: false, reachable: false };
+    throw error;
+  }
+}
+
 /**
  * Opens the server-origin passkey ceremony in a tab. The tab loads an extension page that submits
  * the one-use token to the server in a form body, so the token is never in a URL.
@@ -457,7 +491,22 @@ async function authorizeWithPasskey(
   operationId: string,
   digest: string,
 ): Promise<void> {
-  const { ceremonyId } = await startPasskey(purpose, operationId, digest);
+  let ceremonyId: string;
+  try {
+    ({ ceremonyId } = await startPasskey(purpose, operationId, digest));
+  } catch (error) {
+    // The server answers every refusal the same way. Without a passkey nothing can be approved,
+    // and that is the one refusal the user can fix, so say so instead of "authentication failed".
+    if (error instanceof Error && error.message === 'authentication failed') {
+      const state = await passkeyState().catch(() => undefined);
+      if (state?.reachable && !state.registered) {
+        throw new Error(
+          'This wallet has no passkey yet. Register one first, because every signature needs it.',
+        );
+      }
+    }
+    throw error;
+  }
   const startedAt = Date.now();
   try {
     for (;;) {
@@ -845,7 +894,9 @@ async function handle(request: Request): Promise<unknown> {
     case 'setServerUrl':
       return settings.setServerUrl(request.serverUrl);
     case 'registerPasskey':
-      return startPasskey('register');
+      return registerPasskeyCeremony();
+    case 'passkeyState':
+      return passkeyState();
     case 'assertPasskey':
       return startPasskey(request.purpose, request.operationId, request.digest);
     case 'passkeyLauncherReady':

@@ -124,3 +124,19 @@ condition stated next to it.
 - **RUSTSEC-2025-0141 (`bincode` 1.x, unmaintained).** Not a vulnerability. It is a dependency of
   the pinned `dkls23-core` ([adr/0004](adr/0004-mpc-library-reselection.md)) and is in scope for
   the external audit ([audit.md](audit.md)).
+
+## Registering the passkey
+
+The passkey is what makes the server a second factor, and a wallet without one cannot sign
+through the server: every handoff for a signature or a recovery is refused. So a new wallet shows a
+"Register your passkey" card until the server says one exists, and the button that signs through
+the server stays disabled meanwhile. Signing with the recovery file is unaffected.
+
+The extension keeps no flag for this. A wallet restored onto a new device already has a passkey, and
+only the server knows, so the extension asks (`POST /v1/passkeys/registered`, device key only, no
+credential data in the answer). The server refuses every failed handoff with the same
+"authentication failed", so when a signature is refused the extension asks whether a passkey exists
+and says so if it does not.
+
+Registration accepts P-256 keys only, because assertions are verified against P-256
+([server.md](server.md)).

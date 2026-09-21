@@ -77,7 +77,13 @@ export type Request =
   | { type: 'cancelReshare' }
   | { type: 'readSettings' }
   | { type: 'setServerUrl'; serverUrl: string }
+  /**
+   * Register the wallet's passkey in a tab on the server's origin. Every signature and recovery
+   * needs one. The tab closes the popup, so the outcome is followed with `passkeyState`.
+   */
   | { type: 'registerPasskey' }
+  /** Whether the wallet has a passkey, asked of the server, which is the only place that knows. */
+  | { type: 'passkeyState' }
   | {
       type: 'assertPasskey';
       purpose: 'sign' | 'recovery';
@@ -150,4 +156,10 @@ export interface PendingRecoveryInfo {
   readyAt: number;
   /** A short fingerprint of the requesting device's key. */
   keyFingerprint: string;
+}
+
+/** Whether the wallet has a passkey. `reachable` is false when the server could not be asked. */
+export interface PasskeyState {
+  registered: boolean;
+  reachable: boolean;
 }

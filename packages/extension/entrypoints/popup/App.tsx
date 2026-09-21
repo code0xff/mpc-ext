@@ -1,9 +1,16 @@
 import { useCallback, useEffect, useState } from 'react';
 
-import type { CreatedKey, ReshareProgress, Status, WasmHealth } from '../../src/messages';
+import type {
+  CreatedKey,
+  PasskeyState,
+  ReshareProgress,
+  Status,
+  WasmHealth,
+} from '../../src/messages';
 import { send } from './api';
 import { ExportPanel } from './ExportPanel';
 import { OriginsPanel } from './OriginsPanel';
+import { PasskeyCard } from './PasskeyCard';
 import { PendingRecoveries } from './PendingRecoveries';
 import { RecoverPanel } from './RecoverPanel';
 import { RecoveryExportCard } from './RecoveryExportCard';
@@ -17,6 +24,7 @@ export function App() {
   const [created, setCreated] = useState<CreatedKey>();
   const [reshared, setReshared] = useState<CreatedKey>();
   const [reshareWorking, setReshareWorking] = useState(false);
+  const [passkey, setPasskey] = useState<PasskeyState>();
   const [serverUp, setServerUp] = useState<boolean>();
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string>();
@@ -199,6 +207,7 @@ export function App() {
         </section>
       )}
 
+      {status?.kind === 'unlocked' && <PasskeyCard onState={setPasskey} />}
       {status?.kind === 'unlocked' && <PendingRecoveries />}
 
       {status?.kind === 'unlocked' && status.recovered && reshared && (
@@ -249,7 +258,12 @@ export function App() {
         />
       )}
 
-      {status?.kind === 'unlocked' && <SignPanel serverUp={serverUp} />}
+      {status?.kind === 'unlocked' && (
+        <SignPanel
+          serverUp={serverUp}
+          passkeyMissing={passkey?.registered === false && passkey.reachable}
+        />
+      )}
       {status?.kind === 'unlocked' && <OriginsPanel />}
       {status?.kind === 'unlocked' && !status.recovered && (
         <ExportPanel publicKeyHex={status.publicKeyHex} />
