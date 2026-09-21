@@ -114,9 +114,16 @@ The server share C alone cannot sign. **This case is unrecoverable.**
   ([adr/0009](adr/0009-managing-recoveries-with-the-passkey.md)). This is the way back for someone
   whose device is gone. The new device's waiting screen points to it, and the extension's settings
   and the recovery file's header carry the server address.
-- **The gap this still leaves.** Nothing tells the owner. There is no email or phone by design, so a
-  recovery that nobody looks for completes after the wait. Anyone who holds the passkey can also
-  cancel, including a recovery the owner started, which costs the owner a restart and nothing
+- **A browser notification on the current device.** The extension asks the server every five
+  minutes, in the background and while the wallet is locked (it needs the device key, never the
+  password), and raises a notification the first time it sees a recovery it has not announced. It
+  names the requesting key's fingerprint and when it could take over, and stays until dismissed.
+  It works only while that browser is running, so it does not reach a device that is lost or off.
+- **The gap this still leaves.** Nothing reaches an owner who no longer has the device. There is no
+  email or phone by design, so a recovery that nobody looks for completes after the wait. Web Push
+  to a second browser would close it, at a cost to privacy and to what a self-hoster must run
+  ([adr/0010](adr/0010-notifying-the-owner-of-a-recovery.md)). Anyone who holds the passkey can
+  also cancel, including a recovery the owner started, which costs the owner a restart and nothing
   more.
 - Every step (requested, cooling, cancelled, completed) is written to the audit log, never with
   shares or keys.
