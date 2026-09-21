@@ -11,6 +11,8 @@
  * passkey, sign, lose the device, restore, reshare and take the key out.
  * Scenario B is two devices: a recovery started on a new one shows up on the old one, which
  * cancels it.
+ * Scenario C is the same recovery with the old device gone, cancelled from a browser that has only
+ * the passkey, at the server's own /manage page.
  *
  * Run with: pnpm -C packages/extension ui-smoke
  */
@@ -432,13 +434,115 @@ async function scenarioB() {
   }
 }
 
+// ---------------------------------------------------------------------------------------------
+// Scenario C: the old device is gone. The owner cancels from a browser with only the passkey.
+// ---------------------------------------------------------------------------------------------
+
+async function scenarioC() {
+  console.log(
+    '\n== Scenario C: a recovery is cancelled from a plain browser with only the passkey',
+  );
+  const downloads = await mkdtemp(join(tmpdir(), 'mpc-ext-downloads-'));
+  const server = await startServer({ coolingSeconds: 86_400 });
+  const credentials = new Map();
+  const oldDevice = await launchBrowser({ credentials });
+  const newDevice = await launchBrowser({ credentials });
+  // The owner's authenticator on a computer with no extension and no wallet on it.
+  const stranger = await launchBrowser({ credentials });
+  // Someone else entirely: their own wallet and their own passkey on the same server, in an
+  // authenticator that holds only that passkey. The page must never show them this owner's
+  // recovery, nor show this owner theirs.
+  const otherCredentials = new Map();
+  const otherDevice = await launchBrowser({ credentials: otherCredentials });
+  const otherDownloads = await mkdtemp(join(tmpdir(), 'mpc-ext-downloads-'));
+  try {
+    const old = await openPopup(oldDevice.browser, oldDevice.popupUrl);
+    await see(old, '#create-key');
+    await setServer(old);
+    const recoveryFile = await createWallet(old, downloads);
+    await registerPasskey(old, 'ef'.repeat(32));
+    console.log('  the owner has a wallet, a recovery file and a passkey');
+
+    // A second person with their own wallet and passkey, and no recovery waiting.
+    const other = await openPopup(otherDevice.browser, otherDevice.popupUrl);
+    await see(other, '#create-key');
+    await setServer(other);
+    await createWallet(other, otherDownloads);
+    await registerPasskey(other, '12'.repeat(32));
+    console.log('  a second person has their own wallet and passkey on the same server');
+
+    // Someone with the recovery file asks to take over from a new device.
+    const fresh = await openPopup(newDevice.browser, newDevice.popupUrl);
+    await see(fresh, '#begin-recovery');
+    await setServer(fresh);
+    await chooseFile(fresh, recoveryFile, '#pick-recovery');
+    await waitEnabled(fresh, '#begin-recovery');
+    await click(fresh, '#begin-recovery');
+    await see(fresh, '#recovery-cooling', { timeout: 60_000 });
+    // The recovery panel says where the owner can cancel it from anywhere.
+    await seeText(fresh, '/manage');
+    console.log('  a recovery is waiting, and the new device says where it can be cancelled');
+
+    // The old device is lost. Nothing of it is used from here on.
+    await old.close();
+    await oldDevice.close();
+
+    // The owner opens the server's own page in a browser that has only the passkey.
+    const page = await stranger.browser.newPage();
+    page.on('pageerror', (error) => console.error(`[manage page error] ${error.message}`));
+    await page.goto(`${SERVER}/manage`);
+    await see(page, '#lookup');
+    // Nothing is listed before the passkey is used, and no wallet id is asked for.
+    if ((await shown(page)).toLowerCase().includes('fingerprint')) {
+      throw new Error('the page lists recoveries before the passkey is used');
+    }
+    if (await page.$('input')) throw new Error('the page asks for something to type');
+    await click(page, '#lookup');
+    await seeText(page, 'A recovery is waiting on your wallet', { timeout: 30_000 });
+    await seeText(page, 'fingerprint');
+    console.log('  the passkey alone found the wallet and listed the recovery');
+
+    // The second person uses the same page with their own passkey. They must get their own wallet,
+    // which has nothing waiting, and not the owner's recovery. This is what tells "the passkey
+    // names the wallet" apart from "any wallet will do", which a single wallet cannot.
+    const otherPage = await otherDevice.browser.newPage();
+    await otherPage.goto(`${SERVER}/manage`);
+    await click(otherPage, '#lookup');
+    await seeText(otherPage, 'Nothing is waiting on your wallet', { timeout: 30_000 });
+    if ((await shown(otherPage)).toLowerCase().includes('fingerprint')) {
+      throw new Error("the second person was shown someone else's recovery");
+    }
+    console.log('  the second person, with their own passkey, saw nothing of the owner');
+
+    await click(page, '#recoveries .cancel');
+    await seeText(page, 'Nothing is waiting on your wallet', { timeout: 20_000 });
+    console.log('  the owner cancelled it from that page');
+
+    // The new device finds out.
+    await fresh.reload();
+    await see(fresh, '#restart-recovery', { timeout: 30_000 });
+    await seeText(fresh, 'This recovery was cancelled');
+    console.log('  the new device was told it was cancelled');
+  } finally {
+    await otherDevice.close();
+    await stranger.close();
+    await newDevice.close();
+    await oldDevice.close().catch(() => undefined);
+    await server.stop();
+    await rm(downloads, { recursive: true, force: true });
+    await rm(otherDownloads, { recursive: true, force: true });
+  }
+}
+
 let failed = false;
 try {
   await scenarioA();
   await scenarioB();
+  await scenarioC();
   console.log(
     '\nPASS: the popup creates a wallet, registers the passkey, signs, restores, reshares and\n' +
-      '      exports, and a recovery started elsewhere is shown and cancelled on the old device.',
+      '      exports. A recovery started elsewhere is shown and cancelled on the old device, and\n' +
+      '      from a plain browser with only the passkey.',
   );
 } catch (error) {
   failed = true;

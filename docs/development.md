@@ -30,10 +30,28 @@ A pnpm workspace and a cargo workspace share the repository root.
 | `make openapi` | Regenerate `docs/openapi.json`                            |
 | `make check`   | fmt check + lint + typecheck + test (**the commit gate**) |
 
-The extension also has `pnpm -C packages/extension smoke`, which loads the built extension into
-Chrome for Testing and drives it against a real server inside the real MV3 service worker: DKG,
-onboarding, passkey registration, passkey-approved signing, the offline fallback, device-loss
-recovery and the distributed reshare.
+There are two browser tests, and they check different things.
+
+- `pnpm -C packages/extension smoke` sends messages to the service worker. It proves the protocol
+  works end to end and never draws a component.
+- `pnpm -C packages/extension ui-smoke` drives the popup by typing, clicking and choosing files, and
+  asserts on what the page shows. Scenario A is one person on one device (create, save the recovery
+  file, register the passkey, sign, sign offline, lose the device, restore, reshare, export).
+  Scenario B has two devices, and the old one shows and cancels a recovery started on the new one.
+  Scenario C cancels a recovery from a plain browser at `/manage` with only the passkey, and checks
+  that a second person's passkey shows nothing of the first person's wallet.
+
+  The message test could not have noticed that the popup was a blank page for the project's whole
+  life. Change the popup and run this one.
+
+Both use `harness.mjs`, which starts the server and the browser and answers passkey ceremonies. Each
+scenario gets its own server, so the recovery wait can differ: zero where the test has to finish a
+recovery, a day where it has to look at one that is waiting. After switching branches, rebuild the
+server (`make build-server`) and the extension first. A stale binary fails at passkey registration.
+
+The message test covers DKG, onboarding, passkey registration, passkey-approved signing, the
+offline fallback, device-loss recovery and the distributed reshare, inside the real MV3 service
+worker against a real server.
 
 Every signature and reshare needs a passkey assertion in a tab on the server's origin. The script
 attaches a CDP virtual authenticator to each tab as it opens and carries the registered credential
