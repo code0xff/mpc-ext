@@ -145,20 +145,7 @@ async function attachAuthenticator(target) {
   session.on('WebAuthn.credentialAdded', remember);
   session.on('WebAuthn.credentialAsserted', remember);
 
-  // The server registers passkeys with `enforceCredentialProtectionPolicy`, and Chrome's virtual
-  // authenticator cannot satisfy that at any setting (checked with a standalone probe: it fails
-  // with credProtect enforced and works without). Hardware keys support the extension. So drop
-  // only that flag in this test browser, and leave the server's policy alone.
   const page = await target.page();
-  await page?.evaluateOnNewDocument(() => {
-    const create = navigator.credentials.create.bind(navigator.credentials);
-    navigator.credentials.create = (options) => {
-      if (options?.publicKey?.extensions) {
-        delete options.publicKey.extensions.enforceCredentialProtectionPolicy;
-      }
-      return create(options);
-    };
-  });
   if (page) void rescueStuckCeremony(page);
 }
 

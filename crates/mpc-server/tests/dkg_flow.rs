@@ -224,6 +224,19 @@ async fn passkey_registration_options_are_authenticated_and_single_use() {
         .collect();
     assert_eq!(offered, vec![-7], "only ES256 may be offered");
 
+    // Credential protection is requested at the strictest level but not enforced. Enforcing it
+    // makes registration fail on authenticators without the extension, which includes platform
+    // ones, while every assertion already requires user verification.
+    let extensions = &options["options"]["extensions"];
+    assert_eq!(
+        extensions["credentialProtectionPolicy"], "userVerificationRequired",
+        "credProtect should still be requested: {extensions}"
+    );
+    assert_eq!(
+        extensions["enforceCredentialProtectionPolicy"], false,
+        "credProtect must not be enforced: {extensions}"
+    );
+
     let finish_request = json!({
         "wallet_id": "wallet-passkey",
         "challenge_id": challenge_id,

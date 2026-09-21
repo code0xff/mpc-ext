@@ -42,8 +42,6 @@ Three details are worth knowing when it breaks:
 
 - The extension has to talk to `http://localhost:8080`, not `127.0.0.1`. WebAuthn needs a domain
   as its relying-party id, and the server's default is `localhost`.
-- Chrome's virtual authenticator cannot satisfy `enforceCredentialProtectionPolicy` at any
-  setting. The script removes only that flag in the test browser. The server still enforces it.
 - The smoke server runs with `MPC_SERVER_RECOVERY_COOLING_SECONDS=0`, since a test cannot wait a
   day. The waiting rules are covered by the server's own tests.
 - The script attaches the authenticator after the extension has opened the tab, so it can lose a
