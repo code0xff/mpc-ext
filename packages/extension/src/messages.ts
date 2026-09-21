@@ -41,21 +41,26 @@ export type Request =
    */
   | { type: 'signOffline'; digestHex: string; recoveryShareHex: string }
   /**
-   * Restore a wallet on a fresh install from a recovery file. The wallet can sign again, but it
-   * does not return to a healthy 2-of-3 — see `docs/recovery.md`.
+   * Begin restoring a wallet on a fresh install. This asks the server to let this install's new
+   * device key take over, which needs a passkey assertion and then a waiting period
+   * (`docs/adr/0008-recovery-start-and-device-key-replacement.md`). It returns at once. The
+   * passkey ceremony opens a tab, which closes the popup, and the wait can last a day, so progress
+   * is polled with `recoveryProgress` and survives the popup and the worker closing.
    */
-  | {
-      type: 'recoverFromFile';
-      password: string;
-      walletId: string;
-      publicKeyHex: string;
-      recoveryShareHex: string;
-    }
+  | { type: 'beginRecovery'; walletId: string; publicKeyHex: string }
+  | { type: 'recoveryProgress' }
   /**
-   * Reconstruct the full private key from the extension share and a recovery file. Dangerous:
-   * the MPC benefit is gone for whoever holds the result. Needs the wallet password again.
+   * Finish a recovery whose waiting period is over: the server replaces its device key, and the
+   * recovery share in the file becomes this install's share. The file is selected again here
+   * because nothing secret is kept while waiting. The wallet can spend again but is **not** a
+   * healthy 2-of-3 until it is reshared (`docs/recovery.md`).
    */
-  | { type: 'exportPrivateKey'; password: string; recoveryShareHex: string }
+  | { type: 'finishRecovery'; password: string; publicKeyHex: string; recoveryShareHex: string }
+  /** Give up on a recovery in progress and forget its pending device key. */
+  | { type: 'abandonRecovery' }
+  /** Recoveries that someone has asked for on this wallet, so this install can object. */
+  | { type: 'pendingRecoveries' }
+  | { type: 'cancelPendingRecovery'; requestId: string }
   /**
    * Begin resharing a wallet that was restored from a recovery file, giving it a healthy 2-of-3
    * again (`docs/adr/0007-distributed-reshare.md`). Needs the wallet password and a passkey
@@ -122,4 +127,27 @@ export interface ReshareProgress {
   phase: 'idle' | 'working' | 'ready' | 'failed';
   /** Set once when `phase` is `failed`. */
   error?: string;
+}
+
+/** How far a recovery has got. Never carries a secret. */
+export type RecoveryProgress =
+  | { phase: 'idle' }
+  /** Waiting for the passkey approval in the tab that opened. */
+  | { phase: 'awaitingAssertion' }
+  /** Approved, and waiting out the cooling-off period. `readyAt` is unix seconds. */
+  | { phase: 'cooling'; readyAt: number }
+  /** The waiting period is over. Finish with the recovery file. */
+  | { phase: 'ready' }
+  /** The recovery ended without finishing. Reported once. */
+  | { phase: 'ended'; reason: 'cancelled' | 'expired' };
+
+/** A recovery someone asked for on this wallet, for its owner to recognise or cancel. */
+export interface PendingRecoveryInfo {
+  requestId: string;
+  /** Unix seconds. */
+  requestedAt: number;
+  /** Unix seconds. When the new device could take over. */
+  readyAt: number;
+  /** A short fingerprint of the requesting device's key. */
+  keyFingerprint: string;
 }

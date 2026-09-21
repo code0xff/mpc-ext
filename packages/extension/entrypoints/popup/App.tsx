@@ -4,6 +4,7 @@ import type { CreatedKey, ReshareProgress, Status, WasmHealth } from '../../src/
 import { send } from './api';
 import { ExportPanel } from './ExportPanel';
 import { OriginsPanel } from './OriginsPanel';
+import { PendingRecoveries } from './PendingRecoveries';
 import { RecoverPanel } from './RecoverPanel';
 import { RecoveryExportCard } from './RecoveryExportCard';
 import { ReshareCard } from './ReshareCard';
@@ -197,6 +198,8 @@ export function App() {
           </button>
         </section>
       )}
+
+      {status?.kind === 'unlocked' && <PendingRecoveries />}
 
       {status?.kind === 'unlocked' && status.recovered && reshared && (
         <RecoveryExportCard

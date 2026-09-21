@@ -78,6 +78,9 @@ const server = spawn(SERVER_BIN, [], {
     MPC_SERVER_DATABASE: `sqlite://${join(serverDir, 'smoke.db')}`,
     // A throwaway key for this run only. Never reuse a test key anywhere real.
     MPC_SERVER_SEALING_KEY: '11'.repeat(32),
+    // A real recovery waits a day. The test cannot, so it waits none. What the wait protects is
+    // covered by the server's own tests.
+    MPC_SERVER_RECOVERY_COOLING_SECONDS: '0',
     RUST_LOG: 'warn',
   },
 });
@@ -342,8 +345,35 @@ try {
     if (refused.ok) throw new Error('a locked wallet produced a signature');
     await expect({ type: 'unlock', password: 'correct horse' }, 'unlock');
 
-    // Device-loss recovery: wipe this install, then restore from the recovery file and sign
-    // again with the recovery share plus the server (docs/recovery.md, scenario 1).
+    // Nobody may replace a wallet's device key just by knowing its id. A second registration is
+    // refused, and only a recovery can change it.
+    const intruder = await crypto.subtle.generateKey({ name: 'ECDSA', namedCurve: 'P-256' }, true, [
+      'sign',
+    ]);
+    const intruderKey = [
+      ...new Uint8Array(await crypto.subtle.exportKey('raw', intruder.publicKey)),
+    ]
+      .map((byte) => byte.toString(16).padStart(2, '0'))
+      .join('');
+    const overwrite = await fetch('http://localhost:8080/v1/device-key', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ wallet_id: created.walletId, public_key: intruderKey }),
+    });
+    if (overwrite.status !== 400) {
+      throw new Error(`a second device key was not refused (status ${overwrite.status})`);
+    }
+    // The real key still works after that attempt.
+    const stillWorks = await expect(
+      { type: 'sign', digestHex },
+      'signing after a refused overwrite',
+    );
+    if (stillWorks.signatureHex.length !== 130) throw new Error('a signature is 65 bytes');
+
+    // Device-loss recovery: wipe this install, then restore from the recovery file. The new
+    // install asks the server to trust its device key, the passkey approves, the wait passes
+    // (none here), and then it signs with the recovery share plus the server
+    // (docs/recovery.md, scenario 1).
     await chrome.storage.local.clear();
     // The device key lives in IndexedDB, which a lost device takes with it.
     await new Promise((resolve, reject) => {
@@ -357,11 +387,38 @@ try {
     // origin. A user restoring onto a new device points it at their server again.
     await expect({ type: 'setServerUrl', serverUrl: 'http://localhost:8080' }, 'server url');
 
+    const recoveryStarted = performance.now();
+    const begun = await expect(
+      { type: 'beginRecovery', walletId: created.walletId, publicKeyHex: created.publicKeyHex },
+      'recovery start',
+    );
+    if (begun.phase !== 'awaitingAssertion') throw new Error(`unexpected phase: ${begun.phase}`);
+
+    // Nothing may change until the passkey has approved and the wait is over: the wallet is still
+    // not restored, and finishing now is refused.
+    const early = await send({
+      type: 'finishRecovery',
+      password: 'a whole new horse',
+      publicKeyHex: created.publicKeyHex,
+      recoveryShareHex: created.recoveryShareHex,
+    });
+    if (early.ok) throw new Error('a recovery finished before the passkey approved it');
+    const notYet = await expect({ type: 'status' }, 'status while recovering');
+    if (notYet.kind !== 'uninitialized') throw new Error('the wallet changed before the recovery');
+
+    // The passkey approves in the tab the extension opened. Asking the server is what starts the
+    // (here zero-length) wait, so keep asking until it says the recovery is ready.
+    await within('the recovery to be approved and ready', 60_000, async () => {
+      const progress = await expect({ type: 'recoveryProgress' }, 'recovery progress');
+      if (progress.phase === 'ended') throw new Error(`the recovery ended: ${progress.reason}`);
+      return progress.phase === 'ready';
+    });
+    const recoveryMs = Math.round(performance.now() - recoveryStarted);
+
     const restored = await expect(
       {
-        type: 'recoverFromFile',
+        type: 'finishRecovery',
         password: 'a whole new horse',
-        walletId: created.walletId,
         publicKeyHex: created.publicKeyHex,
         recoveryShareHex: created.recoveryShareHex,
       },
@@ -437,6 +494,7 @@ try {
 
     return {
       reshareMs,
+      recoveryMs,
       config: health.config,
       loadMs: health.loadMs,
       dkgMs,
@@ -453,6 +511,7 @@ try {
   console.log(`DKG (3 parties)  ${result.dkgMs} ms   (extension + server)`);
   console.log(`signing          ${result.signMs} ms   (extension + server)`);
   console.log(`signing restored ${result.recoveredSignMs} ms   (recovery file + server)`);
+  console.log(`recovery         ${result.recoveryMs} ms   (passkey approval included, no wait)`);
   console.log(`reshare          ${result.reshareMs} ms   (passkey approval included)`);
   console.log(`public key       ${result.publicKey.slice(0, 24)}…`);
   console.log(`recovery share   ${result.recoveryShareBytes} bytes`);

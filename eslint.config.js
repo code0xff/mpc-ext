@@ -57,6 +57,7 @@ export default tseslint.config(
         navigator: 'readonly',
         document: 'readonly',
         indexedDB: 'readonly',
+        crypto: 'readonly',
         setTimeout: 'readonly',
       },
     },
