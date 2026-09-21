@@ -1,3 +1,11 @@
+*,
+*::before,
+*::after {
+  /* Inputs and buttons are 100% wide and have padding of their own. Without this they overflow
+     the card they sit in and the popup is cut off on the right. */
+  box-sizing: border-box;
+}
+
 :root {
   color-scheme: light dark;
   --ground: #f5f6fb;
