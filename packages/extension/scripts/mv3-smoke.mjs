@@ -159,34 +159,34 @@ async function attachAuthenticator(target) {
       return create(options);
     };
   });
-  if (page) void ensureCeremonyRunsWithAuthenticator(page);
+  if (page) void rescueStuckCeremony(page);
 }
 
 /**
- * Makes sure the ceremony page asks for a credential only once an authenticator is there.
+ * Rescues a ceremony page that asked for a credential before an authenticator was there.
  *
  * The extension opens the tab, and this script attaches an authenticator to it afterwards. If the
  * page calls WebAuthn first, Chrome does not fail the call. It waits for a device, and one added
  * later is not used for that call, so the ceremony hangs with no error. That is a race between
  * this script and the page, and it shows up on slow machines.
  *
- * The server gives out the same options again for the same ceremony, so loading the page again is
- * safe. Every reload is logged: a failure that is real repeats and shows, only a race clears.
+ * Reloading is safe only **before the page has sent anything to the server.** The server hands out
+ * the same options again for the same ceremony, but the challenge is consumed as soon as an
+ * assertion is checked, so a reload after that fails every time ("no live challenge"). So this
+ * reloads in exactly two cases, both of which happen before the server is involved:
+ *
+ * - the page is still waiting for the authenticator prompt after it should have been answered, or
+ * - the browser itself refused the call (NotAllowedError), which is what a missing authenticator
+ *   looks like once Chrome gives up.
+ *
+ * It never reloads on "authentication failed". That is the server's verdict, and repeating the
+ * ceremony cannot change it. Every reload is logged, so a real problem is visible and not hidden.
  */
-async function ensureCeremonyRunsWithAuthenticator(page) {
-  const onCeremonyPage = () => new URL(page.url()).pathname === '/auth';
-
-  // The authenticator is ready now. A page that is already on the ceremony page may have called
-  // WebAuthn before that, so run it again. A page still on its way there will find it ready.
-  if (onCeremonyPage()) {
-    console.log('[ceremony] the page was already open when the authenticator arrived, reloading');
-    await page.reload().catch(() => undefined);
-  }
-
-  // After that, watch for a ceremony that fails or stops moving.
-  let stuckSince;
-  for (let attempt = 1; attempt <= 40; attempt += 1) {
-    await delay(750);
+async function rescueStuckCeremony(page) {
+  let waitingSince;
+  let reloads = 0;
+  for (let check = 1; check <= 40 && reloads < 3; check += 1) {
+    await delay(500);
     if (page.isClosed()) return;
     const view = await page
       .evaluate(() => {
@@ -201,22 +201,29 @@ async function ensureCeremonyRunsWithAuthenticator(page) {
       })
       .catch(() => ({ failure: '', waiting: false }));
 
-    if (view.failure) {
-      console.log(`[ceremony] the page reported "${view.failure}", reloading (check ${attempt})`);
-      stuckSince = undefined;
+    // A failure only the browser could have produced, before anything reached the server.
+    const refusedByBrowser = /not allowed|timed out/i.test(view.failure);
+    if (refusedByBrowser) {
+      console.log(`[ceremony] the browser refused the call ("${view.failure}"), reloading`);
+      waitingSince = undefined;
+      reloads += 1;
       await page.reload().catch(() => undefined);
     } else if (view.waiting) {
-      stuckSince ??= Date.now();
-      // A prompt is answered within a fraction of a second here. Waiting longer means it is stuck.
-      if (Date.now() - stuckSince > 6000) {
-        console.log(
-          `[ceremony] the page has waited for the authenticator too long, reloading (check ${attempt})`,
-        );
-        stuckSince = undefined;
+      waitingSince ??= Date.now();
+      // Answering the prompt takes a fraction of a second here. Three seconds means it is stuck.
+      if (Date.now() - waitingSince > 3000) {
+        console.log('[ceremony] the page has waited for the authenticator too long, reloading');
+        waitingSince = undefined;
+        reloads += 1;
         await page.reload().catch(() => undefined);
       }
     } else {
-      stuckSince = undefined;
+      waitingSince = undefined;
+      // Anything else is not this race. In particular the server's own answer is left alone.
+      if (view.failure) {
+        console.log(`[ceremony] the page reported "${view.failure}", leaving it alone`);
+        return;
+      }
     }
   }
 }
