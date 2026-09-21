@@ -1,6 +1,6 @@
 # ADR-0008: Starting a recovery and replacing the device key
 
-- Status: accepted; implementation in progress
+- Status: accepted; implemented
 - Date: 2026-09-21
 
 ## Context

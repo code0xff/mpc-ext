@@ -16,10 +16,18 @@ if the service disappears, the user's funds are still spendable.
 
 ## Scenario 1 — device lost (share A gone)
 
-1. Install the extension on a new device and import the recovery file (B).
-2. The extension stores share B under a new password and registers itself as party 1.
-3. Everyday signing now runs **B + C** — the recovery share plus the server.
+1. Install the extension on a new device, point it at the server, and choose the recovery file.
+2. The new install makes a device key and asks the server to trust it. The user approves with
+   their **passkey** in a tab on the server's origin. The page says what is being approved.
+3. The server makes the new install **wait**, 24 hours by default. The request changes nothing
+   until then, and the wallet's old device, if it still exists, shows it and can cancel.
+4. After the wait the user chooses the recovery file again and sets a new password. The server
+   replaces the device key, and the extension stores share B as party 1. Nothing secret was kept
+   while waiting.
+5. Everyday signing now runs **B + C** — the recovery share plus the server.
 
+The design is in [adr/0008](adr/0008-recovery-start-and-device-key-replacement.md). Until it
+existed, a recovery needed only the recovery file and the wallet id.
 The address does not change and the user can spend again. **But the wallet does not return to a
 healthy 2-of-3, and that limitation is structural.**
 
@@ -92,15 +100,27 @@ The server share C alone cannot sign. **This case is unrecoverable.**
 
 ## Server-side checks
 
-- Recovery requests require account authentication plus a cooling-off period. The exact waiting
-  time is an operational policy decision.
-- Notify the registered channel when recovery starts, and let the user cancel.
-- Log every recovery attempt in the audit log (never shares or other secrets).
+- A recovery needs a passkey assertion bound to the new device key, then a cooling-off wait
+  (`MPC_SERVER_RECOVERY_COOLING_SECONDS`, 24 hours by default). The request that asks for the
+  assertion changes nothing by itself. There are no accounts, so nothing else can authenticate it.
+- A wallet may open five requests an hour and have one waiting at a time. A stranger who only knows
+  a wallet id cannot replace its device key, because registration is first-use only.
+- **Objection.** There is no email or phone by design, so nothing pushes a notice. The extension
+  asks the server whenever it is unlocked and shows any recovery that is waiting, with the
+  requesting key's fingerprint and a cancel button. The requester can also withdraw.
+- **The gap this leaves.** A user whose device is gone, and whose passkey is misused, gets the wait
+  but no warning. Cancelling with the passkey, and looking up waiting recoveries from a fresh
+  browser, are deferred (`roadmap.md`).
+- Every step (requested, cooling, cancelled, completed) is written to the audit log, never with
+  shares or keys.
 
 ## Test requirements
 
 - Signing succeeds for all three pairings: A+C (everyday), A+B (server down), B+C (device lost).
 - Aborting recovery leaves the previous shares valid (rollback safety).
+- A recovery does not replace the device key before the passkey has approved it and the wait is
+  over, an approval for one key does not start another's wait, and a cancelled request cannot
+  complete (`mpc-server` tests, and the MV3 smoke test end to end).
 - After a reshare, the lost share A cannot sign with any new share (`mpc-core` and server tests).
 - After a reshare, the old shares still sign among themselves. That is why the server deletes its
   old share on commit and why the old recovery file has to be destroyed.
