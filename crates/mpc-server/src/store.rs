@@ -116,7 +116,14 @@ impl Store {
             .connect_with(options)
             .await?;
         sqlx::migrate!("./migrations").run(&pool).await?;
-        Ok(Self { pool })
+        let store = Self { pool };
+        // Credentials stored before the user handle column existed cannot be found by handle until
+        // it is filled in. It is cheap and does nothing once every row has one.
+        let filled = store.backfill_user_handles().await?;
+        if filled > 0 {
+            tracing::info!(filled, "indexed passkey user handles");
+        }
+        Ok(store)
     }
 
     /// Stores a one-time WebAuthn challenge.
@@ -334,17 +341,118 @@ impl Store {
     ) -> Result<(), Error> {
         let now = timestamp();
         sqlx::query(
-            "INSERT INTO passkey_credentials (wallet_id, credential, sign_count, created_at, updated_at)
-             VALUES (?, ?, ?, ?, ?)",
+            "INSERT INTO passkey_credentials
+               (wallet_id, credential, sign_count, created_at, updated_at, user_handle)
+             VALUES (?, ?, ?, ?, ?, ?)",
         )
         .bind(wallet_id)
         .bind(credential)
         .bind(i64::from(sign_count))
         .bind(&now)
         .bind(&now)
+        .bind(user_handle_of(credential))
         .execute(&self.pool)
         .await?;
         Ok(())
+    }
+
+    /// Finds the wallet a passkey belongs to from its user handle.
+    ///
+    /// A usernameless assertion carries the handle and nothing else that names the wallet.
+    pub async fn wallet_for_user_handle(
+        &self,
+        user_handle: &[u8],
+    ) -> Result<Option<String>, Error> {
+        let row: Option<(String,)> =
+            sqlx::query_as("SELECT wallet_id FROM passkey_credentials WHERE user_handle = ?")
+                .bind(user_handle)
+                .fetch_optional(&self.pool)
+                .await?;
+        Ok(row.map(|(wallet_id,)| wallet_id))
+    }
+
+    /// Fills in the user handle of credentials stored before the column existed.
+    ///
+    /// Returns how many rows it filled. A credential whose blob has no readable handle is left
+    /// alone: it could never have completed a usernameless assertion anyway.
+    pub async fn backfill_user_handles(&self) -> Result<u64, Error> {
+        let rows: Vec<(String, Vec<u8>)> = sqlx::query_as(
+            "SELECT wallet_id, credential FROM passkey_credentials WHERE user_handle IS NULL",
+        )
+        .fetch_all(&self.pool)
+        .await?;
+        let mut filled = 0;
+        for (wallet_id, credential) in rows {
+            let Some(handle) = user_handle_of(&credential) else {
+                continue;
+            };
+            let updated = sqlx::query(
+                "UPDATE passkey_credentials SET user_handle = ?
+                 WHERE wallet_id = ? AND user_handle IS NULL",
+            )
+            .bind(handle)
+            .bind(&wallet_id)
+            .execute(&self.pool)
+            .await?;
+            filled += updated.rows_affected();
+        }
+        Ok(filled)
+    }
+
+    /// Opens a management session and returns nothing secret: the caller keeps the token, and only
+    /// its hash is stored. Sessions are short, and a wallet may have several.
+    pub async fn open_manage_session(
+        &self,
+        session_hash: &[u8],
+        wallet_id: &str,
+        ttl_seconds: i64,
+    ) -> Result<(), Error> {
+        let now = unix_now();
+        // Expired sessions are useless, so clear them while here.
+        sqlx::query("DELETE FROM manage_sessions WHERE expires_unix < ?")
+            .bind(now)
+            .execute(&self.pool)
+            .await?;
+        sqlx::query(
+            "INSERT INTO manage_sessions (session_hash, wallet_id, expires_unix) VALUES (?, ?, ?)",
+        )
+        .bind(session_hash)
+        .bind(wallet_id)
+        .bind(now + ttl_seconds)
+        .execute(&self.pool)
+        .await?;
+        Ok(())
+    }
+
+    /// The wallet a live management session belongs to.
+    pub async fn manage_session_wallet(
+        &self,
+        session_hash: &[u8],
+    ) -> Result<Option<String>, Error> {
+        let row: Option<(String,)> = sqlx::query_as(
+            "SELECT wallet_id FROM manage_sessions WHERE session_hash = ? AND expires_unix >= ?",
+        )
+        .bind(session_hash)
+        .bind(unix_now())
+        .fetch_optional(&self.pool)
+        .await?;
+        Ok(row.map(|(wallet_id,)| wallet_id))
+    }
+
+    /// How many challenges for the management page are live. The page asks for one without any
+    /// proof, so the count is capped to keep the table from being filled.
+    ///
+    /// These are the challenges with no wallet: every other challenge is made for a wallet whose
+    /// device key has already authenticated the request.
+    pub async fn live_manage_challenges(&self) -> Result<i64, Error> {
+        let (count,): (i64,) = sqlx::query_as(
+            "SELECT COUNT(*) FROM passkey_challenges
+             WHERE wallet_id = '' AND used_at IS NULL AND expires_at >= ?",
+        )
+        .bind(timestamp())
+        .fetch_one(&self.pool)
+        .await?;
+        Ok(count)
     }
 
     /// Updates credential state after a successful assertion.
@@ -1169,4 +1277,16 @@ fn timestamp() -> String {
 
 fn unix_now() -> i64 {
     time::OffsetDateTime::now_utc().unix_timestamp()
+}
+
+/// Reads the passkey's user handle out of a stored credential blob, if it has one.
+fn user_handle_of(credential: &[u8]) -> Option<Vec<u8>> {
+    #[derive(serde::Deserialize)]
+    struct Blob {
+        user_id: Vec<u8>,
+    }
+    serde_json::from_slice::<Blob>(credential)
+        .ok()
+        .map(|blob| blob.user_id)
+        .filter(|handle| !handle.is_empty())
 }

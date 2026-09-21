@@ -593,11 +593,7 @@ pub async fn verify_assertion(
     state: &AppState,
     request: &AssertFinishRequest,
 ) -> Result<(), Error> {
-    let credential_json = serde_json::to_vec(&request.credential)
-        .map_err(|_| Error::Protocol("credential is malformed".into()))?;
-    if credential_json.len() > MAX_CREDENTIAL_JSON_BYTES {
-        return Err(Error::Protocol("credential is too large".into()));
-    }
+    let credential_json = credential_bytes(&request.credential)?;
     let Some((server_state, binding)) = state
         .store
         .take_passkey_challenge_with_binding(&request.challenge_id, &request.wallet_id, "assert")
@@ -616,13 +612,129 @@ pub async fn verify_assertion(
         tracing::warn!("passkey assertion does not match the operation it was issued for");
         return Err(Error::Authentication);
     }
-    let server_state = DiscoverableAuthenticationServerState::decode(&server_state)
-        .map_err(|_| Error::Protocol("passkey ceremony state is invalid".into()))?;
+
+    verify_and_advance(state, &request.wallet_id, &server_state, &credential_json).await?;
+
+    state
+        .store
+        .put_passkey_authorization(
+            &request.wallet_id,
+            &request.purpose,
+            &request.operation_id,
+            &request.digest,
+            AUTHORIZATION_TTL_SECONDS,
+        )
+        .await
+}
+
+/// The wallet id a management challenge is stored under. It is empty because the wallet is not
+/// known until the assertion names it, and `validate_wallet_id` refuses an empty id, so no real
+/// wallet can collide with it.
+pub(crate) const MANAGE_WALLET: &str = "";
+
+/// What a management challenge is for. It has no operation or digest: the assertion only proves
+/// that someone holds a wallet's passkey.
+pub(crate) const MANAGE_PURPOSE: &str = "manage";
+
+/// Starts an assertion that is not tied to any wallet yet, for the management page.
+///
+/// The browser lets the user pick a passkey and the response says whose it is. Nothing about a
+/// wallet is disclosed here, and there is nothing to disclose: no wallet is named.
+pub(crate) async fn manage_options(state: &AppState) -> Result<AssertOptionsResponse, Error> {
+    let rp_id = state.passkey.rp_id()?;
+    let options = DiscoverableCredentialRequestOptions::passkey(&rp_id);
+    let (server_state, client_state) = options
+        .start_ceremony()
+        .map_err(|_| Error::Protocol("passkey ceremony could not start".into()))?;
+    let server_state = server_state
+        .encode()
+        .map_err(|_| Error::Protocol("passkey ceremony state could not be stored".into()))?;
+    let options = serde_json::to_value(&client_state)
+        .map_err(|_| Error::Protocol("passkey options could not be encoded".into()))?;
+    let challenge_id = uuid::Uuid::new_v4().to_string();
+    state
+        .store
+        .put_passkey_challenge_with_binding(
+            &challenge_id,
+            MANAGE_WALLET,
+            "assert",
+            &server_state,
+            MANAGE_PURPOSE.as_bytes(),
+            CEREMONY_TTL_SECONDS,
+        )
+        .await?;
+    Ok(AssertOptionsResponse {
+        challenge_id,
+        options,
+    })
+}
+
+/// Verifies a usernameless assertion and returns the wallet whose passkey made it.
+///
+/// The wallet comes from the user handle in the response and is then checked the same way as any
+/// other assertion. A handle that names no wallet fails exactly like a bad signature, so this
+/// cannot be used to ask which passkeys exist.
+pub(crate) async fn verify_manage_assertion(
+    state: &AppState,
+    challenge_id: &str,
+    credential: &Value,
+) -> Result<String, Error> {
+    let credential_json = credential_bytes(credential)?;
+    let Some((server_state, binding)) = state
+        .store
+        .take_passkey_challenge_with_binding(challenge_id, MANAGE_WALLET, "assert")
+        .await?
+    else {
+        tracing::warn!("management assertion has no live challenge");
+        return Err(Error::Authentication);
+    };
+    if binding != MANAGE_PURPOSE.as_bytes() {
+        tracing::warn!("management assertion answers a challenge made for something else");
+        return Err(Error::Authentication);
+    }
+
     let authentication = DiscoverableAuthentication64::from_json_relaxed(&credential_json)
+        .map_err(|_| Error::Protocol("passkey credential is invalid".into()))?;
+    let handle = authentication.response().user_handle().as_ref().to_vec();
+    let Some(wallet_id) = state.store.wallet_for_user_handle(&handle).await? else {
+        tracing::warn!("management assertion names a passkey that no wallet has");
+        return Err(Error::Authentication);
+    };
+
+    verify_and_advance(state, &wallet_id, &server_state, &credential_json).await?;
+    Ok(wallet_id)
+}
+
+/// Serializes a credential JSON value and refuses one that is too large.
+fn credential_bytes(credential: &Value) -> Result<Vec<u8>, Error> {
+    let bytes = serde_json::to_vec(credential)
+        .map_err(|_| Error::Protocol("credential is malformed".into()))?;
+    if bytes.len() > MAX_CREDENTIAL_JSON_BYTES {
+        return Err(Error::Protocol("credential is too large".into()));
+    }
+    Ok(bytes)
+}
+
+/// Verifies an assertion against a wallet's stored passkey and advances its signature counter.
+///
+/// This is the one place an assertion is checked, for an assertion tied to a wallet and for the
+/// usernameless one on the management page alike. It checks the relying party, the origin, the
+/// signature, that the counter moves forward, and that user verification was performed, and it
+/// stores the new counter. It says nothing about what the assertion was for: the caller decides
+/// that and acts on it.
+async fn verify_and_advance(
+    state: &AppState,
+    wallet_id: &str,
+    server_state: &[u8],
+    credential_json: &[u8],
+) -> Result<(), Error> {
+    let server_state = DiscoverableAuthenticationServerState::decode(server_state)
+        .map_err(|_| Error::Protocol("passkey ceremony state is invalid".into()))?;
+    let authentication = DiscoverableAuthentication64::from_json_relaxed(credential_json)
         .map_err(|_| Error::Protocol("passkey credential is invalid".into()))?;
     let (credential_bytes, database_sign_count) = state
         .store
-        .passkey_credential(&request.wallet_id)
+        .passkey_credential(wallet_id)
         .await?
         .ok_or(Error::Authentication)?;
     let mut stored = StoredCredential::from_json(&credential_bytes)?;
@@ -689,21 +801,7 @@ pub async fn verify_assertion(
         .map_err(|_| Error::Protocol("passkey credential could not be stored".into()))?;
     state
         .store
-        .update_passkey_credential(
-            &request.wallet_id,
-            &encoded,
-            credential.dynamic_state().sign_count,
-        )
-        .await?;
-    state
-        .store
-        .put_passkey_authorization(
-            &request.wallet_id,
-            &request.purpose,
-            &request.operation_id,
-            &request.digest,
-            AUTHORIZATION_TTL_SECONDS,
-        )
+        .update_passkey_credential(wallet_id, &encoded, credential.dynamic_state().sign_count)
         .await
 }
 

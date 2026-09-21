@@ -27,7 +27,7 @@ export default tseslint.config(
   },
   {
     // Plain browser scripts that ship as-is, with no bundler and no module resolution.
-    files: ['examples/**/*.js', 'crates/mpc-server/static/auth.js'],
+    files: ['examples/**/*.js', 'crates/mpc-server/static/*.js'],
     languageOptions: {
       globals: {
         atob: 'readonly',

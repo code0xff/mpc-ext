@@ -7,6 +7,7 @@ pub mod api;
 pub mod auth;
 pub mod auth_page;
 pub mod crypto;
+pub mod manage;
 pub mod passkey;
 pub mod recovery;
 pub mod reshare;

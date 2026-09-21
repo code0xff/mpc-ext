@@ -520,6 +520,9 @@ async fn advance_sign(
         crate::recovery::complete,
         crate::recovery::pending,
         crate::recovery::cancel,
+        crate::manage::challenge,
+        crate::manage::session,
+        crate::manage::cancel,
         passkey::register_options,
         passkey::register_finish,
         passkey::assert_options,
@@ -551,6 +554,10 @@ async fn advance_sign(
         crate::recovery::ListRecoveries,
         crate::recovery::PendingRecovery,
         crate::recovery::PendingRecoveries,
+        crate::manage::ManageFinish,
+        crate::manage::ManageView,
+        crate::manage::WaitingRecovery,
+        crate::manage::ManageCancel,
         WireEnvelope,
         RegisterOptionsRequest,
         RegisterOptionsResponse,
@@ -607,6 +614,11 @@ pub fn router(state: AppState) -> Router {
             post(passkey::ceremony_status),
         )
         .route("/v1/passkeys/registered", post(passkey::registered))
+        .route("/manage", get(crate::manage::page))
+        .route("/manage.js", get(crate::manage::script))
+        .route("/manage/challenge", get(crate::manage::challenge))
+        .route("/manage/session", post(crate::manage::session))
+        .route("/manage/cancel", post(crate::manage::cancel))
         .route("/auth", get(auth_page::page))
         .route("/auth.js", get(auth_page::script))
         .route("/auth/handoff", post(auth_page::handoff))

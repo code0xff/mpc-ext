@@ -2308,3 +2308,324 @@ async fn a_wallet_can_ask_whether_it_has_a_passkey_but_only_with_its_device_key(
         "another key must be refused"
     );
 }
+
+// ---------------------------------------------------------------------------------------------
+// Managing recoveries with the passkey alone (docs/adr/0009-managing-recoveries-with-the-passkey.md)
+//
+// A real assertion needs a registered authenticator, which these tests cannot fake, so they open a
+// session through the store the way a verified assertion would. What they check is everything
+// around it: nothing works without a session, a session belongs to one wallet, and the checks the
+// page depends on hold. The assertion itself is exercised by the browser smoke tests.
+// ---------------------------------------------------------------------------------------------
+
+const MANAGE_ORIGIN: &str = "http://localhost:8080";
+
+/// Opens a session as a verified assertion would, and returns the token a browser would hold.
+async fn open_session(store: &Store, wallet: &str, ttl: i64) -> String {
+    use sha2::{Digest, Sha256};
+    let token = format!("{:0>64}", format!("{wallet}-session"));
+    let token = hex_of(token.as_bytes())[..64].to_owned();
+    store
+        .open_manage_session(&Sha256::digest(token.as_bytes()), wallet, ttl)
+        .await
+        .expect("the session should open");
+    token
+}
+
+async fn manage_post(
+    app: &axum::Router,
+    path: &str,
+    body: Value,
+    cookie: Option<&str>,
+    origin: Option<&str>,
+) -> (StatusCode, Value) {
+    let mut headers = HeaderMap::new();
+    if let Some(token) = cookie {
+        headers.insert(
+            "cookie",
+            HeaderValue::from_str(&format!("mpc_manage_session={token}")).expect("cookie header"),
+        );
+    }
+    if let Some(origin) = origin {
+        headers.insert(
+            "origin",
+            HeaderValue::from_str(origin).expect("origin header"),
+        );
+    }
+    post_with_headers(app, path, body, headers).await
+}
+
+/// A waiting recovery on the fixture wallet, cooling and past its passkey approval.
+async fn waiting_recovery(app: &axum::Router, store: &Store, seed: u8) -> (String, SigningKey) {
+    let key = device_key_of(seed);
+    let (_, requested) = ask_to_recover(app, &key).await;
+    let request_id = requested["request_id"].as_str().expect("id").to_owned();
+    approve(store, &request_id, &key).await;
+    call_as(app, &key, "/v1/recovery/status", &request_id).await;
+    (request_id, key)
+}
+
+#[tokio::test]
+async fn cancelling_needs_a_live_session_and_the_pages_own_origin() {
+    let (app, store, _current) = recovery_fixture(3600).await;
+    let (request_id, key) = waiting_recovery(&app, &store, 90).await;
+    let body = json!({ "request_id": request_id });
+
+    // No session at all.
+    let (status, _) = manage_post(
+        &app,
+        "/manage/cancel",
+        body.clone(),
+        None,
+        Some(MANAGE_ORIGIN),
+    )
+    .await;
+    assert_eq!(
+        status,
+        StatusCode::UNAUTHORIZED,
+        "no session must not cancel"
+    );
+
+    // A made-up token.
+    let (status, _) = manage_post(
+        &app,
+        "/manage/cancel",
+        body.clone(),
+        Some(&"ab".repeat(32)),
+        Some(MANAGE_ORIGIN),
+    )
+    .await;
+    assert_eq!(
+        status,
+        StatusCode::UNAUTHORIZED,
+        "an unknown token must not cancel"
+    );
+
+    // A real session, but the request comes from another site or from no page at all.
+    let token = open_session(&store, RECOVERY_WALLET, 300).await;
+    let (status, _) = manage_post(
+        &app,
+        "/manage/cancel",
+        body.clone(),
+        Some(&token),
+        Some("https://evil.example"),
+    )
+    .await;
+    assert_eq!(
+        status,
+        StatusCode::UNAUTHORIZED,
+        "a foreign origin must not cancel"
+    );
+    let (status, _) = manage_post(&app, "/manage/cancel", body.clone(), Some(&token), None).await;
+    assert_eq!(
+        status,
+        StatusCode::UNAUTHORIZED,
+        "a request with no origin must not cancel"
+    );
+
+    // Nothing was cancelled by any of that.
+    let (_, still) = call_as(&app, &key, "/v1/recovery/status", &request_id).await;
+    assert_eq!(
+        still["state"], "cooling",
+        "the recovery must still be waiting: {still}"
+    );
+
+    // With the session and the right origin it works, and reports what is left.
+    let (status, view) = manage_post(
+        &app,
+        "/manage/cancel",
+        body,
+        Some(&token),
+        Some(MANAGE_ORIGIN),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{view}");
+    assert_eq!(view["recoveries"].as_array().expect("list").len(), 0);
+    let (_, after) = call_as(&app, &key, "/v1/recovery/status", &request_id).await;
+    assert_eq!(after["state"], "cancelled");
+}
+
+#[tokio::test]
+async fn a_session_cancels_only_its_own_wallets_recoveries() {
+    let (app, store, _current) = recovery_fixture(3600).await;
+    let (request_id, key) = waiting_recovery(&app, &store, 91).await;
+
+    // Another wallet's passkey has a session, but the recovery is not that wallet's.
+    let other = open_session(&store, "some-other-wallet", 300).await;
+    let (status, _) = manage_post(
+        &app,
+        "/manage/cancel",
+        json!({ "request_id": request_id }),
+        Some(&other),
+        Some(MANAGE_ORIGIN),
+    )
+    .await;
+    assert_eq!(
+        status,
+        StatusCode::NOT_FOUND,
+        "another wallet must not reach this recovery"
+    );
+    let (_, still) = call_as(&app, &key, "/v1/recovery/status", &request_id).await;
+    assert_eq!(still["state"], "cooling");
+}
+
+#[tokio::test]
+async fn an_expired_session_cancels_nothing() {
+    let (app, store, _current) = recovery_fixture(3600).await;
+    let (request_id, key) = waiting_recovery(&app, &store, 92).await;
+
+    // A session that ended a minute ago.
+    let token = open_session(&store, RECOVERY_WALLET, -60).await;
+    let (status, _) = manage_post(
+        &app,
+        "/manage/cancel",
+        json!({ "request_id": request_id }),
+        Some(&token),
+        Some(MANAGE_ORIGIN),
+    )
+    .await;
+    assert_eq!(
+        status,
+        StatusCode::UNAUTHORIZED,
+        "an expired session must not cancel"
+    );
+    let (_, still) = call_as(&app, &key, "/v1/recovery/status", &request_id).await;
+    assert_eq!(still["state"], "cooling");
+}
+
+#[tokio::test]
+async fn the_management_session_endpoint_refuses_an_unverified_assertion() {
+    let (app, _store, _current) = recovery_fixture(3600).await;
+
+    // A challenge can be had without any proof: it names no wallet and reveals nothing.
+    let mut request = Request::builder().method("GET").uri("/manage/challenge");
+    request = request.header("accept", "application/json");
+    let response = app
+        .clone()
+        .oneshot(request.body(Body::empty()).expect("request"))
+        .await
+        .expect("response");
+    assert_eq!(response.status(), StatusCode::OK);
+    let bytes = axum::body::to_bytes(response.into_body(), 1 << 20)
+        .await
+        .expect("body");
+    let challenge: Value = serde_json::from_slice(&bytes).expect("json");
+    let challenge_id = challenge["challenge_id"]
+        .as_str()
+        .expect("challenge id")
+        .to_owned();
+    assert!(challenge["options"]["challenge"].is_string());
+    assert!(
+        challenge["options"]
+            .get("allowCredentials")
+            .is_none_or(|list| list.as_array().is_some_and(Vec::is_empty)),
+        "a usernameless challenge must not name a credential: {challenge}"
+    );
+
+    // Answering it with something that is not an assertion fails and opens no session.
+    let (status, body) = manage_post(
+        &app,
+        "/manage/session",
+        json!({ "challenge_id": challenge_id, "credential": {} }),
+        None,
+        Some(MANAGE_ORIGIN),
+    )
+    .await;
+    assert!(
+        status == StatusCode::BAD_REQUEST || status == StatusCode::UNAUTHORIZED,
+        "a bogus assertion must fail: {status} {body}"
+    );
+
+    // And a foreign origin is refused before anything else is looked at.
+    let (status, _) = manage_post(
+        &app,
+        "/manage/session",
+        json!({ "challenge_id": "x", "credential": {} }),
+        None,
+        Some("https://evil.example"),
+    )
+    .await;
+    assert_eq!(
+        status,
+        StatusCode::UNAUTHORIZED,
+        "a foreign origin must be refused"
+    );
+
+    // The challenge is one-use: it is gone after that attempt.
+    let (status, _) = manage_post(
+        &app,
+        "/manage/session",
+        json!({ "challenge_id": challenge_id, "credential": {} }),
+        None,
+        Some(MANAGE_ORIGIN),
+    )
+    .await;
+    assert!(
+        status == StatusCode::BAD_REQUEST || status == StatusCode::UNAUTHORIZED,
+        "a used challenge must not work again"
+    );
+}
+
+#[tokio::test]
+async fn only_a_limited_number_of_management_challenges_may_wait() {
+    let (app, _store, _current) = recovery_fixture(3600).await;
+    let challenge = || async {
+        app.clone()
+            .oneshot(
+                Request::builder()
+                    .method("GET")
+                    .uri("/manage/challenge")
+                    .body(Body::empty())
+                    .expect("request"),
+            )
+            .await
+            .expect("response")
+            .status()
+    };
+
+    // The page asks without any proof, so the number waiting at once has to be bounded. Ask through
+    // the endpoint, since that is what stores them, until it refuses.
+    let mut accepted = 0;
+    let mut refused_at = None;
+    for i in 0..400 {
+        match challenge().await {
+            StatusCode::OK => accepted += 1,
+            StatusCode::TOO_MANY_REQUESTS => {
+                refused_at = Some(i);
+                break;
+            }
+            other => panic!("unexpected status {other}"),
+        }
+    }
+    assert_eq!(refused_at, Some(200), "the 201st challenge must be refused");
+    assert_eq!(accepted, 200);
+}
+
+#[tokio::test]
+async fn the_management_page_is_served_with_the_same_protections_as_the_ceremony_page() {
+    let (app, _store, _current) = recovery_fixture(3600).await;
+    for path in ["/manage", "/manage.js"] {
+        let response = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri(path)
+                    .body(Body::empty())
+                    .expect("request"),
+            )
+            .await
+            .expect("response");
+        assert_eq!(response.status(), StatusCode::OK, "{path}");
+        let headers = response.headers();
+        assert_eq!(
+            headers["cache-control"], "no-store, max-age=0",
+            "{path} must not be cached"
+        );
+        let csp = headers["content-security-policy"].to_str().expect("csp");
+        assert!(
+            csp.contains("script-src 'self'") && !csp.contains("unsafe-inline"),
+            "{path}: {csp}"
+        );
+        assert_eq!(headers["x-content-type-options"], "nosniff");
+    }
+}

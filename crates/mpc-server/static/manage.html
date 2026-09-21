@@ -1,0 +1,27 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>mpc-ext recoveries</title>
+  </head>
+  <body>
+    <main>
+      <h1>Check for recoveries</h1>
+      <p id="intro">
+        If someone asked to take over your wallet, it waits before it can. You can see it here and
+        cancel it, from any browser, with your passkey. Nothing tells you when this happens, so it
+        is worth looking if you have lost a device or your recovery file.
+      </p>
+      <p>
+        Cancel only a recovery you did not start. If you are restoring your own wallet on a new
+        device, leave it.
+      </p>
+      <button type="button" id="lookup">Look up with my passkey</button>
+      <p id="status" hidden></p>
+      <p id="error" hidden></p>
+      <ul id="recoveries"></ul>
+    </main>
+    <script src="/manage.js" defer></script>
+  </body>
+</html>
