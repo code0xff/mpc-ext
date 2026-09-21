@@ -121,7 +121,8 @@ The server share C alone cannot sign. **This case is unrecoverable.**
   It works only while that browser is running, so it does not reach a device that is lost or off.
 - **The gap this still leaves.** Nothing reaches an owner who no longer has the device. There is no
   email or phone by design, so a recovery that nobody looks for completes after the wait. Web Push
-  to a second browser would close it, at a cost to privacy and to what a self-hoster must run
+  to a second browser would close it, at a cost to privacy and to what a self-hoster must run. It
+  was set aside for the demo stage and is to be revisited before real assets
   ([adr/0010](adr/0010-notifying-the-owner-of-a-recovery.md)). Anyone who holds the passkey can
   also cancel, including a recovery the owner started, which costs the owner a restart and nothing
   more.

@@ -58,7 +58,7 @@
 - [x] Device proof over the exact request bytes
 - [x] Cancel a recovery with the passkey, and look up waiting recoveries from a fresh browser (`/manage`, [adr/0009](adr/0009-managing-recoveries-with-the-passkey.md))
 - [x] Tell the owner on the current device when a recovery starts (background check and a browser notification)
-- [ ] Tell an owner who no longer has the device. Web Push to a second browser is proposed in [adr/0010](adr/0010-notifying-the-owner-of-a-recovery.md), not decided
+- [ ] Tell an owner who no longer has the device. Web Push to a second browser was considered and set aside for the demo stage ([adr/0010](adr/0010-notifying-the-owner-of-a-recovery.md)). Revisit before real assets or a Web Store listing
 - [x] Register a passkey after key creation: a card asks the server whether the wallet has one and offers to register it, and signing through the server explains why it is refused until then
 
 ## Phase 4 — web integration
