@@ -55,6 +55,15 @@ import {
   storePendingDeviceKey,
 } from '../src/deviceKey';
 import * as recoveryState from '../src/recoveryState';
+import {
+  describeRecovery,
+  readTold,
+  remember,
+  unannounced,
+  WATCH_ALARM,
+  WATCH_PERIOD_MINUTES,
+  writeTold,
+} from '../src/recoveryWatch';
 import * as settings from '../src/settings';
 import * as vault from '../src/vault';
 import { ethereum_address, export_private_key, loadWasm, threshold_config } from '../src/wasm';
@@ -384,6 +393,46 @@ async function listPendingRecoveries(): Promise<PendingRecoveryInfo[]> {
   } catch (error) {
     if (error instanceof ServerUnreachable) return [];
     throw error;
+  }
+}
+
+/**
+ * Asks the server whether someone has asked to replace this wallet's device, and raises a
+ * notification for each recovery the user has not been told about.
+ *
+ * It needs the device key and nothing else, so it works while the wallet is locked. It stays quiet
+ * when there is nothing to watch (no wallet here, or this install is itself mid-recovery) and when
+ * the server cannot be reached. A recovery is remembered only after its notification was raised, so
+ * one that failed to show is tried again.
+ */
+async function watchRecoveries(): Promise<number> {
+  if (!(await vault.exists()) || (await recoveryState.read())) return 0;
+  const pending = await listPendingRecoveries().catch(() => []);
+  const fresh = unannounced(pending, await readTold());
+  if (fresh.length === 0) return 0;
+
+  for (const item of fresh) {
+    const { title, message } = describeRecovery(item);
+    await chrome.notifications.create(`recovery-${item.requestId}`, {
+      type: 'basic',
+      iconUrl: chrome.runtime.getURL('icon/128.png'),
+      title,
+      message,
+      priority: 2,
+      requireInteraction: true,
+    });
+  }
+  await writeTold(remember(await readTold(), fresh));
+  return fresh.length;
+}
+
+/** Makes sure the periodic check exists. Alarms survive the worker stopping, so this is cheap. */
+async function ensureWatchAlarm(): Promise<void> {
+  if (!(await chrome.alarms.get(WATCH_ALARM))) {
+    await chrome.alarms.create(WATCH_ALARM, {
+      delayInMinutes: 1,
+      periodInMinutes: WATCH_PERIOD_MINUTES,
+    });
   }
 }
 
@@ -875,6 +924,8 @@ async function handle(request: Request): Promise<unknown> {
       return abandonRecovery();
     case 'pendingRecoveries':
       return listPendingRecoveries();
+    case 'checkRecoveries':
+      return watchRecoveries();
     case 'cancelPendingRecovery':
       return cancelPendingRecovery(request.requestId);
     case 'startReshare':
@@ -922,6 +973,17 @@ async function handle(request: Request): Promise<unknown> {
 }
 
 export default defineBackground(() => {
+  void ensureWatchAlarm();
+  chrome.alarms.onAlarm.addListener((alarm) => {
+    if (alarm.name === WATCH_ALARM) void watchRecoveries().catch(() => undefined);
+  });
+  // A notification is about a recovery that can only be answered in the popup, so open it there.
+  chrome.notifications.onClicked.addListener((id) => {
+    if (id.startsWith('recovery-'))
+      void chrome.tabs.create({ url: chrome.runtime.getURL('popup.html') });
+    void chrome.notifications.clear(id);
+  });
+
   chrome.runtime.onMessage.addListener(
     (request: Request, sender, sendResponse: (response: Response<unknown>) => void) => {
       // Page requests are answered against the origin the browser reports for the sender. A page

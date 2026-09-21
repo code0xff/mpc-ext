@@ -200,6 +200,9 @@ async function createWallet(page, downloadsRoot) {
   if (!(await isDisabled(page, '#confirm-recovery'))) {
     throw new Error('the wallet can be started before the recovery file is saved');
   }
+  // The card tells the owner where to look if someone ever asks to take over the wallet.
+  await see(page, '#manage-bookmark');
+  await seeText(page, `${SERVER}/manage`);
   await type(page, '#recovery-password', RECOVERY_PASSWORD);
   await type(page, '#recovery-password-again', RECOVERY_PASSWORD);
   await click(page, '#download-recovery');
@@ -418,6 +421,44 @@ async function scenarioB() {
     );
     if (!/^[0-9a-f]{8}$/.test(fingerprint)) throw new Error(`odd key fingerprint: ${fingerprint}`);
     console.log(`  the old device shows the request (key ${fingerprint})`);
+
+    // It also raises a browser notification, without the popup being open. The check runs every
+    // few minutes in the background, so run it now instead of waiting.
+    // It works while the wallet is locked: the check needs the device key and never the password.
+    await click(old, '#lock');
+    await see(old, '#unlock-password');
+    const alarm = await old.evaluate(() => chrome.alarms.get('recoveryWatch'));
+    if (!alarm || !alarm.periodInMinutes) {
+      throw new Error('the periodic recovery check is not scheduled');
+    }
+    const check = () =>
+      old.evaluate(
+        () =>
+          new Promise((resolve, reject) =>
+            chrome.runtime.sendMessage({ type: 'checkRecoveries' }, (response) => {
+              if (chrome.runtime.lastError) reject(new Error(chrome.runtime.lastError.message));
+              else if (!response.ok) reject(new Error(response.error));
+              else resolve(response.value);
+            }),
+          ),
+      );
+    const raised = await check();
+    if (raised !== 1) throw new Error(`expected one notification, got ${raised}`);
+    const notifications = await old.evaluate(
+      () => new Promise((resolve) => chrome.notifications.getAll(resolve)),
+    );
+    const ids = Object.keys(notifications);
+    if (ids.length !== 1 || !ids[0].startsWith('recovery-')) {
+      throw new Error(`the notification was not created: ${JSON.stringify(ids)}`);
+    }
+    // Once told, it must not be told again on the next check.
+    const again = await check();
+    if (again !== 0) throw new Error(`the same recovery was announced again (${again})`);
+    console.log('  the old device raised a notification once, and not a second time, while locked');
+    await type(old, '#unlock-password', WALLET_PASSWORD);
+    await click(old, '#unlock');
+    await seeText(old, 'Unlocked');
+
     await click(old, '#pending-recoveries .cancel-pending');
     await see(old, '#pending-recoveries', { hidden: true, timeout: 20_000 });
 
