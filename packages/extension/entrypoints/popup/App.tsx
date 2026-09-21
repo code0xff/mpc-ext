@@ -3,6 +3,7 @@ import { useCallback, useEffect, useState } from 'react';
 import type {
   CreatedKey,
   PasskeyState,
+  RecoveryProgress,
   ReshareProgress,
   Status,
   WasmHealth,
@@ -28,6 +29,11 @@ export function App() {
   const [serverUp, setServerUp] = useState<boolean>();
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string>();
+  // Restoring is the exception, so it is reached from a link rather than shown beside key
+  // creation. A restore already under way outlives the popup, so look for one on open.
+  const [restoring, setRestoring] = useState(false);
+  const [recoveryPhase, setRecoveryPhase] = useState<RecoveryProgress['phase']>('idle');
+  const [passkeySkipped, setPasskeySkipped] = useState<boolean>();
 
   const refresh = useCallback(async () => {
     setStatus(await send<Status>({ type: 'status' }));
@@ -37,6 +43,10 @@ export function App() {
     void send<boolean>({ type: 'serverHealth' })
       .then(setServerUp)
       .catch(() => setServerUp(false));
+  }, []);
+
+  useEffect(() => {
+    void readPasskeySkipped().then(setPasskeySkipped);
   }, []);
 
   useEffect(() => {
@@ -107,6 +117,31 @@ export function App() {
     }
   }, []);
 
+  // Onboarding is three steps in a fixed order, and each one hides everything else so that the
+  // popup reads as a sequence rather than a wall of cards. Step 3 is the passkey: without one the
+  // server will not take part in a signature, so it belongs on the main path, not in a side card.
+  const needsPasskey =
+    status?.kind === 'unlocked' &&
+    !status.recovered &&
+    passkey?.registered === false &&
+    passkey.reachable &&
+    passkeySkipped === false;
+  const step =
+    status?.kind === 'uninitialized' && !restoring && recoveryPhase === 'idle'
+      ? 1
+      : status?.kind === 'awaitingRecoveryExport'
+        ? 2
+        : needsPasskey
+          ? 3
+          : undefined;
+  const onboarding = step !== undefined;
+
+  const skipPasskey = () =>
+    run(async () => {
+      await writePasskeySkipped();
+      setPasskeySkipped(true);
+    });
+
   return (
     <main>
       <header>
@@ -114,21 +149,31 @@ export function App() {
         <p className="warn">Unaudited. Do not use with real assets.</p>
       </header>
 
-      <section>
-        <h2>Status</h2>
-        <dl>
-          <dt>Wallet</dt>
-          <dd id="wallet-status">{status ? describe(status) : 'Checking…'}</dd>
-          <dt>MPC engine</dt>
-          <dd>{health ? `${health.config}, loaded in ${health.loadMs} ms` : 'Checking…'}</dd>
-          <dt>Server</dt>
-          <dd className={serverUp === false ? 'warn' : undefined}>
-            {serverUp === undefined ? 'Checking…' : serverUp ? 'Reachable' : 'Unreachable'}
-          </dd>
-        </dl>
-      </section>
+      {onboarding && (
+        <p className="steps" id="onboarding-step">
+          Step {step} of 3 ·{' '}
+          {['Create your wallet', 'Save your recovery file', 'Register your passkey'][step - 1]}
+        </p>
+      )}
 
-      {status?.kind === 'uninitialized' && (
+      {/* Until the status is known, showing the dashboard would flash it before onboarding. */}
+      {status !== undefined && !onboarding && (
+        <section>
+          <h2>Status</h2>
+          <dl>
+            <dt>Wallet</dt>
+            <dd id="wallet-status">{status ? describe(status) : 'Checking…'}</dd>
+            <dt>MPC engine</dt>
+            <dd>{health ? `${health.config}, loaded in ${health.loadMs} ms` : 'Checking…'}</dd>
+            <dt>Server</dt>
+            <dd className={serverUp === false ? 'warn' : undefined}>
+              {serverUp === undefined ? 'Checking…' : serverUp ? 'Reachable' : 'Unreachable'}
+            </dd>
+          </dl>
+        </section>
+      )}
+
+      {step === 1 && (
         <CreateKey
           busy={busy}
           onCreate={(password) =>
@@ -140,8 +185,27 @@ export function App() {
         />
       )}
 
-      {/* Creating a wallet is what almost everyone does here; restoring is the exception. */}
-      {status?.kind === 'uninitialized' && <RecoverPanel onRecovered={setStatus} />}
+      {step === 1 && (
+        <button
+          type="button"
+          id="restore-instead"
+          className="quiet"
+          onClick={() => setRestoring(true)}
+        >
+          Lost your device? Restore from a recovery file
+        </button>
+      )}
+
+      {status?.kind === 'uninitialized' && (
+        <>
+          <RecoverPanel onRecovered={setStatus} onPhase={setRecoveryPhase} collapsed={!restoring} />
+          {restoring && recoveryPhase === 'idle' && (
+            <button type="button" className="quiet" onClick={() => setRestoring(false)}>
+              Back
+            </button>
+          )}
+        </>
+      )}
 
       {status?.kind === 'awaitingRecoveryExport' && created && (
         <RecoveryExportCard
@@ -183,7 +247,7 @@ export function App() {
         />
       )}
 
-      {status?.kind === 'unlocked' && (
+      {status?.kind === 'unlocked' && !onboarding && (
         <section>
           <h2>Wallet</h2>
           <p className="mono">{status.publicKeyHex}</p>
@@ -209,9 +273,19 @@ export function App() {
       )}
 
       {status?.kind === 'unlocked' && <PasskeyCard onState={setPasskey} />}
-      {status?.kind === 'unlocked' && <PendingRecoveries />}
+      {step === 3 && (
+        <button
+          type="button"
+          id="skip-passkey"
+          className="quiet"
+          onClick={() => void skipPasskey()}
+        >
+          Not now — I will do this later
+        </button>
+      )}
+      {status?.kind === 'unlocked' && !onboarding && <PendingRecoveries />}
 
-      {status?.kind === 'unlocked' && status.recovered && reshared && (
+      {status?.kind === 'unlocked' && !onboarding && status.recovered && reshared && (
         <RecoveryExportCard
           created={reshared}
           heading="Save your new recovery file"
@@ -239,7 +313,7 @@ export function App() {
           }
         />
       )}
-      {status?.kind === 'unlocked' && status.recovered && !reshared && (
+      {status?.kind === 'unlocked' && !onboarding && status.recovered && !reshared && (
         <ReshareCard
           busy={busy}
           working={reshareWorking}
@@ -259,18 +333,18 @@ export function App() {
         />
       )}
 
-      {status?.kind === 'unlocked' && (
+      {status?.kind === 'unlocked' && !onboarding && (
         <SignPanel
           serverUp={serverUp}
           passkeyMissing={passkey?.registered === false && passkey.reachable}
         />
       )}
-      {status?.kind === 'unlocked' && <OriginsPanel />}
-      {status?.kind === 'unlocked' && !status.recovered && (
+      {status?.kind === 'unlocked' && !onboarding && <OriginsPanel />}
+      {status?.kind === 'unlocked' && !onboarding && !status.recovered && (
         <ExportPanel publicKeyHex={status.publicKeyHex} />
       )}
 
-      <ServerPanel onChanged={checkServer} />
+      {(!onboarding || step === 1) && <ServerPanel onChanged={checkServer} />}
 
       {error && (
         <p className="error" id="error">
@@ -279,6 +353,22 @@ export function App() {
       )}
     </main>
   );
+}
+
+/** Whether the user chose to leave the passkey until later. A preference, never a secret. */
+const SKIPPED_KEY = 'onboardingPasskeySkipped';
+
+async function readPasskeySkipped(): Promise<boolean> {
+  try {
+    const stored = await chrome.storage.local.get(SKIPPED_KEY);
+    return stored[SKIPPED_KEY] === true;
+  } catch {
+    return false;
+  }
+}
+
+async function writePasskeySkipped(): Promise<void> {
+  await chrome.storage.local.set({ [SKIPPED_KEY]: true });
 }
 
 function CreateKey({ busy, onCreate }: { busy: boolean; onCreate: (password: string) => void }) {

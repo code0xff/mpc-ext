@@ -34,7 +34,17 @@ function headerOf(parsed: unknown): FileHeader {
  * device has time to object. Every stage says what it is waiting for. A restored wallet is also not
  * fully healthy (`docs/recovery.md`), and this says so.
  */
-export function RecoverPanel({ onRecovered }: { onRecovered: (status: Status) => void }) {
+export function RecoverPanel({
+  onRecovered,
+  onPhase,
+  collapsed,
+}: {
+  onRecovered: (status: Status) => void;
+  /** Lets the popup know a recovery is under way, so it can step out of onboarding. */
+  onPhase?: (phase: RecoveryProgress['phase']) => void;
+  /** True while the user has not asked to restore. The panel keeps polling but shows nothing. */
+  collapsed?: boolean;
+}) {
   const [progress, setProgress] = useState<RecoveryProgress>({ phase: 'idle' });
   const [parsed, setParsed] = useState<unknown>();
   const [fileName, setFileName] = useState('');
@@ -64,6 +74,7 @@ export function RecoverPanel({ onRecovered }: { onRecovered: (status: Status) =>
         .then((next) => {
           if (stopped) return;
           setProgress(next);
+          onPhase?.(next.phase);
           const wait =
             next.phase === 'awaitingAssertion'
               ? POLL_APPROVAL_MS
@@ -164,6 +175,10 @@ export function RecoverPanel({ onRecovered }: { onRecovered: (status: Status) =>
       />
     </>
   );
+
+  // The progress poll has to keep running even while this is out of the way: the background
+  // reports an ended recovery once, and whoever asks first is the only one who sees it.
+  if (collapsed && phase === 'idle') return null;
 
   return (
     <section>
