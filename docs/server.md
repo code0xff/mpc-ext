@@ -195,3 +195,18 @@ Rejected assertions all reach the client as `authentication failed`. The server 
   instant for testing and removes the protection the wait gives.
 - Times are stored as unix seconds. The older RFC 3339 columns are compared as strings, which
   orders wrongly when the fractional digits differ in length.
+
+## Credential protection
+
+Registration asks for `credProtect` at `userVerificationRequired` but does **not enforce** it. An
+authenticator that lacks the extension still registers, and one that has it applies it.
+
+Enforcing it (`enforceCredentialProtectionPolicy: true`) would make registration fail on
+authenticators without the extension, which platform authenticators and some passkey managers are.
+It buys little here: every assertion asks for user verification, and `verify_assertion` rejects one
+that did not carry it, so a credential cannot authorize anything without it whatever the
+authenticator does. What is lost is the authenticator's own second layer of that same rule.
+
+This also keeps the test browser honest. Chrome's virtual authenticator cannot satisfy an enforced
+credProtect at any setting, so the smoke test used to strip the flag from the page. It now runs the
+options the server actually sends.

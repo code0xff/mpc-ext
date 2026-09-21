@@ -17,10 +17,11 @@ use webauthn_rp::request::auth::{
     SignatureCounterEnforcement,
 };
 use webauthn_rp::request::register::{
-    CoseAlgorithmIdentifier, CoseAlgorithmIdentifiers, PublicKeyCredentialCreationOptions,
-    PublicKeyCredentialUserEntity, RegistrationServerState, UserHandle64,
+    CoseAlgorithmIdentifier, CoseAlgorithmIdentifiers, CredProtect,
+    PublicKeyCredentialCreationOptions, PublicKeyCredentialUserEntity, RegistrationServerState,
+    UserHandle64,
 };
-use webauthn_rp::request::{AsciiDomain, DomainOrigin, RpId};
+use webauthn_rp::request::{AsciiDomain, DomainOrigin, ExtensionInfo, RpId};
 use webauthn_rp::response::register::{CompressedPubKey, DynamicState, StaticState};
 use webauthn_rp::{
     AuthenticatedCredential, DiscoverableAuthentication64, DiscoverableAuthenticationServerState,
@@ -436,6 +437,13 @@ pub async fn registration_options(
         .remove(CoseAlgorithmIdentifier::Eddsa)
         .remove(CoseAlgorithmIdentifier::Es384)
         .remove(CoseAlgorithmIdentifier::Rs256);
+    // Ask for credential protection at the strictest level, but do not require the authenticator to
+    // provide it. Enforcing it makes registration fail on authenticators that lack the extension,
+    // which includes platform ones, and buys little here: every assertion already demands user
+    // verification and `verify_assertion` rejects one that lacks it. Where the authenticator does
+    // support the extension, it still applies.
+    options.extensions.cred_protect =
+        CredProtect::UserVerificationRequired(ExtensionInfo::AllowDontEnforceValue);
     let (server_state, client_state) = options
         .start_ceremony()
         .map_err(|_| Error::Protocol("passkey ceremony could not start".into()))?;
