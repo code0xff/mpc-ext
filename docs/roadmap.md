@@ -57,7 +57,7 @@
       replaced only through it ([adr/0008](adr/0008-recovery-start-and-device-key-replacement.md))
 - [x] Device proof over the exact request bytes
 - [ ] Cancel a recovery with the passkey, and look up waiting recoveries from a fresh browser
-- [ ] Register a passkey during onboarding (no screen does it yet, so a new wallet cannot sign)
+- [x] Register a passkey after key creation: a card asks the server whether the wallet has one and offers to register it, and signing through the server explains why it is refused until then
 
 ## Phase 4 — web integration
 

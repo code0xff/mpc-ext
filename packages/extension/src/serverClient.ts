@@ -61,6 +61,17 @@ export async function createPasskeyHandoff(
   );
 }
 
+/** Whether the wallet has a passkey. Only the wallet's own device key may ask. */
+export async function passkeyRegistered(baseUrl: string, walletId: string): Promise<boolean> {
+  const body = await post<{ registered: boolean }>(
+    baseUrl,
+    '/v1/passkeys/registered',
+    { wallet_id: walletId },
+    true,
+  );
+  return body.registered;
+}
+
 /** Polls the device-authenticated result of the browser ceremony. */
 export async function passkeyCeremonyStatus(
   baseUrl: string,

@@ -69,6 +69,7 @@ Rules:
 | `POST /v1/passkeys/assert/finish`    | Verify and consume an assertion                       |
 | `POST /v1/passkeys/handoff`          | Create a one-use server-origin browser handoff        |
 | `POST /v1/passkeys/ceremony/status`  | Read browser ceremony status                          |
+| `POST /v1/passkeys/registered`       | Whether the wallet has a passkey (device key only)    |
 | `POST /auth/handoff`                 | Exchange a body token for an HttpOnly session         |
 | `GET  /auth`                         | Serve the fixed-origin WebAuthn ceremony page         |
 | `POST /v1/reshare/session`           | Open a reshare (device key + `recovery` grant)        |

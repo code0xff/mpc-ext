@@ -11,7 +11,14 @@ import { send } from './api';
  * approval screen — showing the requesting origin and a decoded transaction — arrives with the
  * web provider (`docs/web-api.md`).
  */
-export function SignPanel({ serverUp }: { serverUp: boolean | undefined }) {
+export function SignPanel({
+  serverUp,
+  passkeyMissing = false,
+}: {
+  serverUp: boolean | undefined;
+  /** The wallet has no passkey yet, so the server cannot take part in a signature. */
+  passkeyMissing?: boolean;
+}) {
   const [digest, setDigest] = useState('');
   const [result, setResult] = useState<Signed>();
   const [error, setError] = useState<string>();
@@ -69,6 +76,13 @@ export function SignPanel({ serverUp }: { serverUp: boolean | undefined }) {
         }}
       />
 
+      {passkeyMissing && (
+        <p className="warn" id="passkey-missing">
+          Register your passkey above to sign through the server. You can still sign with your
+          recovery file.
+        </p>
+      )}
+
       {serverUp === false && (
         <p className="warn">
           The server is unreachable. You can still sign with your recovery file.
@@ -78,7 +92,7 @@ export function SignPanel({ serverUp }: { serverUp: boolean | undefined }) {
       <button
         type="button"
         id="sign"
-        disabled={!valid || busy}
+        disabled={passkeyMissing || !valid || busy}
         onClick={() => void signWithServer()}
       >
         {busy ? 'Signing…' : 'Sign with the server'}
