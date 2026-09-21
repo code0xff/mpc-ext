@@ -60,6 +60,8 @@ export type Request =
   | { type: 'abandonRecovery' }
   /** Recoveries that someone has asked for on this wallet, so this install can object. */
   | { type: 'pendingRecoveries' }
+  /** Run the periodic recovery check now. Returns how many notifications it raised. */
+  | { type: 'checkRecoveries' }
   | { type: 'cancelPendingRecovery'; requestId: string }
   /**
    * Begin resharing a wallet that was restored from a recovery file, giving it a healthy 2-of-3

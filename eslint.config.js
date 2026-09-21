@@ -50,6 +50,7 @@ export default tseslint.config(
         console: 'readonly',
         process: 'readonly',
         URL: 'readonly',
+        Buffer: 'readonly',
         // Code inside page.evaluate runs in the browser context.
         chrome: 'readonly',
         performance: 'readonly',

@@ -1,7 +1,8 @@
-import { useState, type ReactNode } from 'react';
+import { useEffect, useState, type ReactNode } from 'react';
 
 import type { CreatedKey } from '../../src/messages';
 import { MIN_PASSWORD_LENGTH } from '../../src/recoveryFile';
+import { send } from './api';
 import { downloadRecoveryFile } from './recoveryFile';
 
 /**
@@ -35,6 +36,16 @@ export function RecoveryExportCard({
   const [again, setAgain] = useState('');
   const [working, setWorking] = useState(false);
   const [error, setError] = useState<string>();
+  const [manageUrl, setManageUrl] = useState<string>();
+
+  // The address of the page that shows and cancels a waiting recovery with only the passkey. It is
+  // worth writing down now, because it is needed on the day the device is gone
+  // (docs/adr/0010-notifying-the-owner-of-a-recovery.md).
+  useEffect(() => {
+    void send<{ serverUrl: string }>({ type: 'readSettings' })
+      .then((settings) => setManageUrl(`${settings.serverUrl}/manage`))
+      .catch(() => undefined);
+  }, []);
 
   const download = async () => {
     setWorking(true);
@@ -61,6 +72,11 @@ export function RecoveryExportCard({
         The file is encrypted with a <b>recovery password</b> you choose now. You will need it to
         restore or to sign without the server, so write it down separately. It can differ from your
         wallet password.
+      </p>
+      <p id="manage-bookmark">
+        Also keep this address: <span className="mono">{manageUrl ?? 'your server + /manage'}</span>
+        . If someone ever asks to take over your wallet, nothing will tell you. From any browser,
+        with your passkey, you can look there and cancel it.
       </p>
       <label htmlFor="recovery-password">Recovery password</label>
       <input
