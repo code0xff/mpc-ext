@@ -316,6 +316,60 @@ pub async fn handoff(
     }))
 }
 
+/// Asks whether a wallet has a passkey.
+#[derive(Debug, Serialize, Deserialize, ToSchema)]
+pub struct PasskeyRegisteredRequest {
+    /// The wallet identifier.
+    pub wallet_id: String,
+}
+
+/// Whether a wallet has a passkey.
+#[derive(Debug, Serialize, ToSchema)]
+pub struct PasskeyRegistered {
+    /// `true` once a passkey is registered. Every signature and recovery needs one.
+    pub registered: bool,
+}
+
+/// Tells an install whether its wallet has a passkey.
+///
+/// The server is the only place that knows: a wallet restored onto a new device already has one,
+/// and a new wallet does not until the user registers it. Only the wallet's device key may ask,
+/// and the answer carries no credential data.
+#[utoipa::path(
+    post,
+    path = "/v1/passkeys/registered",
+    request_body = PasskeyRegisteredRequest,
+    responses(
+        (status = 200, description = "whether a passkey is registered", body = PasskeyRegistered),
+        (status = 401, description = "missing or invalid device proof"),
+    ),
+)]
+pub async fn registered(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    SignedJson {
+        value: request,
+        raw,
+    }: SignedJson<PasskeyRegisteredRequest>,
+) -> Result<Json<PasskeyRegistered>, ApiError> {
+    authenticate(
+        &state.store,
+        &headers,
+        "POST",
+        "/v1/passkeys/registered",
+        &request.wallet_id,
+        &raw,
+    )
+    .await?;
+    Ok(Json(PasskeyRegistered {
+        registered: state
+            .store
+            .passkey_credential(&request.wallet_id)
+            .await?
+            .is_some(),
+    }))
+}
+
 /// Returns browser ceremony progress to the extension without exposing credential state.
 #[utoipa::path(
     post,
