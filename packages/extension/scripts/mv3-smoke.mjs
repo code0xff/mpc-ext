@@ -296,7 +296,24 @@ try {
   // popup page and let the worker handle it.
   const extensionId = new URL(target.url()).host;
   const page = await browser.newPage();
+  const popupErrors = [];
+  page.on('pageerror', (error) => popupErrors.push(error.message));
   await page.goto(`chrome-extension://${extensionId}/popup.html`);
+
+  // The rest of this script talks to the worker, so it never draws a component. A popup that
+  // fails to render (the build once produced `React is not defined` and a blank page) would pass
+  // every check below. Check that the UI actually appears.
+  await page
+    .waitForFunction(() => document.body.innerText.includes('Wallet'), { timeout: 15_000 })
+    .catch(() => undefined);
+  const drawn = await page.evaluate(() => document.body.innerText.replace(/\s+/g, ' ').trim());
+  if (popupErrors.length > 0) {
+    throw new Error(`the popup threw while rendering: ${popupErrors.join('; ')}`);
+  }
+  if (!drawn.includes('Wallet') || !drawn.includes('MPC engine')) {
+    throw new Error(`the popup did not render. It shows: "${drawn.slice(0, 120)}"`);
+  }
+  console.log('popup rendered:', drawn.slice(0, 60) + '…');
 
   const result = await page.evaluate(async () => {
     const send = (request) =>
