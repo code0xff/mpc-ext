@@ -32,6 +32,7 @@ export function App() {
   // Restoring is the exception, so it is reached from a link rather than shown beside key
   // creation. A restore already under way outlives the popup, so look for one on open.
   const [restoring, setRestoring] = useState(false);
+  const [recoveryPhase, setRecoveryPhase] = useState<RecoveryProgress['phase']>('idle');
   const [passkeySkipped, setPasskeySkipped] = useState<boolean>();
 
   const refresh = useCallback(async () => {
@@ -45,12 +46,6 @@ export function App() {
   }, []);
 
   useEffect(() => {
-    void send<RecoveryProgress>({ type: 'recoveryProgress' })
-      .then((progress) => {
-        // 'ended' counts too: a cancelled or expired recovery has to say so, not vanish.
-        if (progress.phase !== 'idle') setRestoring(true);
-      })
-      .catch(() => undefined);
     void readPasskeySkipped().then(setPasskeySkipped);
   }, []);
 
@@ -132,7 +127,7 @@ export function App() {
     passkey.reachable &&
     passkeySkipped === false;
   const step =
-    status?.kind === 'uninitialized' && !restoring
+    status?.kind === 'uninitialized' && !restoring && recoveryPhase === 'idle'
       ? 1
       : status?.kind === 'awaitingRecoveryExport'
         ? 2
@@ -161,7 +156,8 @@ export function App() {
         </p>
       )}
 
-      {!onboarding && (
+      {/* Until the status is known, showing the dashboard would flash it before onboarding. */}
+      {status !== undefined && !onboarding && (
         <section>
           <h2>Status</h2>
           <dl>
@@ -200,12 +196,14 @@ export function App() {
         </button>
       )}
 
-      {status?.kind === 'uninitialized' && restoring && (
+      {status?.kind === 'uninitialized' && (
         <>
-          <RecoverPanel onRecovered={setStatus} />
-          <button type="button" className="quiet" onClick={() => setRestoring(false)}>
-            Back
-          </button>
+          <RecoverPanel onRecovered={setStatus} onPhase={setRecoveryPhase} collapsed={!restoring} />
+          {restoring && recoveryPhase === 'idle' && (
+            <button type="button" className="quiet" onClick={() => setRestoring(false)}>
+              Back
+            </button>
+          )}
         </>
       )}
 
