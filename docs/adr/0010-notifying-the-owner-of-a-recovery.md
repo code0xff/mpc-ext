@@ -1,6 +1,6 @@
 # ADR-0010: Telling the owner that a recovery was asked for
 
-- Status: proposed (the browser notification is implemented; Web Push is not decided)
+- Status: accepted. The browser notification is implemented. Web Push is not adopted for now.
 - Date: 2026-09-21
 
 ## Context
@@ -80,19 +80,23 @@ is a second dependency choice, made when this is decided.
 
 ## Decision
 
-**Not made.** What is decided: the browser notification on the current device ships now, and this
-ADR records the option so that the choice is deliberate.
+**Web Push is not adopted for now.** The project is at the demo stage, where the server making
+outbound requests and storing a push subscription per wallet is a cost with no user to justify it.
+What stays: the browser notification on the current device, the wait, `/manage`, and the reminder
+on the recovery file card to keep the `/manage` address.
 
-What a decision needs to settle:
+The honest position is the one in [recovery.md](../recovery.md): those are what the design offers,
+and it tells an owner who has lost the device and everything else nothing.
+
+**Revisit before real assets are involved, or before a Web Store listing.** At that point three
+things need settling, and the analysis above is the starting point:
 
 1. Is a second browser a reasonable thing to ask of the owner, given that it only helps if done
    before the loss?
 2. Is the server allowed to make outbound requests, and to store a push subscription per wallet?
 3. Which HTTP client, and how subscription URLs are restricted.
 
-If the answer to the first two is no, the honest position is the one in
-[recovery.md](../recovery.md): the wait, the extension's notification and `/manage` are what the
-design offers, and it tells an owner who has lost everything nothing.
+Until then nothing in the code depends on this option, so leaving it costs no rework.
 
 ## Consequences of leaving it as it is
 
