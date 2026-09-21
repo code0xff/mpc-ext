@@ -74,7 +74,7 @@ jobs:
       - run: wasm-pack build crates/mpc-wasm --target web
 
   extension:
-    name: extension build + MV3 smoke
+    name: extension build + smoke tests
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5
@@ -101,6 +101,9 @@ jobs:
       # Chrome 137 and later ignore --load-extension in the regular browser.
       - run: pnpm dlx @puppeteer/browsers install chrome@stable
       - run: pnpm -C packages/extension smoke
+      # Drives the popup by typing and clicking. The smoke test above sends messages to the worker
+      # and never draws a component, so it cannot notice a blank or broken popup.
+      - run: pnpm -C packages/extension ui-smoke
 
   supply-chain:
     name: licenses, advisories, secrets
