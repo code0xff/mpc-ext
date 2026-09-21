@@ -30,6 +30,11 @@ A pnpm workspace and a cargo workspace share the repository root.
 | `make openapi` | Regenerate `docs/openapi.json`                            |
 | `make check`   | fmt check + lint + typecheck + test (**the commit gate**) |
 
+To try the extension by hand, build with `make build` and run `scripts/dev-server.sh`. It creates a
+sealing key under `~/.mpc-ext-dev` on first run and reuses it afterwards, so wallets survive a
+restart. The key is for local testing only. The recovery wait defaults to zero there; set
+`MPC_SERVER_RECOVERY_COOLING_SECONDS` to see a real wait.
+
 There are two browser tests, and they check different things.
 
 - `pnpm -C packages/extension smoke` sends messages to the service worker. It proves the protocol
