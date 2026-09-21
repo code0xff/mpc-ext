@@ -21,7 +21,7 @@ jobs:
     name: rust (fmt, clippy, test)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: rustfmt, clippy
@@ -34,7 +34,7 @@ jobs:
     name: js (lint, typecheck, test)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7
       # `pnpm install` runs `wxt prepare`, which imports the wasm glue, so build it first.
       - uses: dtolnay/rust-toolchain@stable
         with:
@@ -61,7 +61,7 @@ jobs:
     name: wasm build
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@stable
         with:
           targets: wasm32-unknown-unknown
@@ -77,7 +77,7 @@ jobs:
     name: extension build + smoke tests
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@stable
         with:
           targets: wasm32-unknown-unknown
@@ -109,7 +109,7 @@ jobs:
     name: licenses, advisories, secrets
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7
         with:
           fetch-depth: 0
       # Block copyleft and vulnerable dependencies (AGENTS.md open-source rules).
