@@ -298,6 +298,41 @@
         }
       }
     },
+    "/v1/passkeys/registered": {
+      "post": {
+        "tags": [
+          "passkey"
+        ],
+        "summary": "Tells an install whether its wallet has a passkey.",
+        "description": "The server is the only place that knows: a wallet restored onto a new device already has one,\nand a new wallet does not until the user registers it. Only the wallet's device key may ask,\nand the answer carries no credential data.",
+        "operationId": "registered",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PasskeyRegisteredRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "whether a passkey is registered",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PasskeyRegistered"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "missing or invalid device proof"
+          }
+        }
+      }
+    },
     "/v1/recovery/cancel": {
       "post": {
         "tags": [
@@ -1093,6 +1128,32 @@
       "ListRecoveries": {
         "type": "object",
         "description": "A request to list what is waiting on a wallet.",
+        "required": [
+          "wallet_id"
+        ],
+        "properties": {
+          "wallet_id": {
+            "type": "string",
+            "description": "The wallet identifier."
+          }
+        }
+      },
+      "PasskeyRegistered": {
+        "type": "object",
+        "description": "Whether a wallet has a passkey.",
+        "required": [
+          "registered"
+        ],
+        "properties": {
+          "registered": {
+            "type": "boolean",
+            "description": "`true` once a passkey is registered. Every signature and recovery needs one."
+          }
+        }
+      },
+      "PasskeyRegisteredRequest": {
+        "type": "object",
+        "description": "Asks whether a wallet has a passkey.",
         "required": [
           "wallet_id"
         ],

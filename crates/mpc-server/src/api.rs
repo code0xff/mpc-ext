@@ -22,7 +22,8 @@ use crate::passkey::{self, PasskeyConfig};
 use crate::passkey::{
     AssertFinishRequest, AssertFinishResponse, AssertOptionsRequest, AssertOptionsResponse,
     CeremonyStatusRequest, CeremonyStatusResponse, HandoffRequest, HandoffResponse,
-    RegisterFinishRequest, RegisterOptionsRequest, RegisterOptionsResponse,
+    PasskeyRegistered, PasskeyRegisteredRequest, RegisterFinishRequest, RegisterOptionsRequest,
+    RegisterOptionsResponse,
 };
 use crate::store::Store;
 use crate::Error;
@@ -524,7 +525,8 @@ async fn advance_sign(
         passkey::assert_options,
         passkey::assert_finish,
         passkey::handoff,
-        passkey::ceremony_status
+        passkey::ceremony_status,
+        passkey::registered
     ),
     components(schemas(
         Health,
@@ -561,6 +563,8 @@ async fn advance_sign(
         HandoffResponse,
         CeremonyStatusRequest,
         CeremonyStatusResponse,
+        PasskeyRegisteredRequest,
+        PasskeyRegistered,
     )),
     info(
         title = "mpc-ext server",
@@ -602,6 +606,7 @@ pub fn router(state: AppState) -> Router {
             "/v1/passkeys/ceremony/status",
             post(passkey::ceremony_status),
         )
+        .route("/v1/passkeys/registered", post(passkey::registered))
         .route("/auth", get(auth_page::page))
         .route("/auth.js", get(auth_page::script))
         .route("/auth/handoff", post(auth_page::handoff))

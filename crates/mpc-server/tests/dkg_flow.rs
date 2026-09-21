@@ -2253,3 +2253,45 @@ async fn recovery_status_needs_a_proof_from_the_requests_own_key() {
     let (status, _) = call_as(&app, &current, "/v1/recovery/status", &request_id).await;
     assert_eq!(status, StatusCode::UNAUTHORIZED);
 }
+
+#[tokio::test]
+async fn a_wallet_can_ask_whether_it_has_a_passkey_but_only_with_its_device_key() {
+    let (app, store, device_key) = wallet_with_device("wallet-registered").await;
+    let ask = json!({ "wallet_id": "wallet-registered" });
+
+    let (status, body) = signed_post(
+        &app,
+        &device_key,
+        "/v1/passkeys/registered",
+        ask.clone(),
+        "a",
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(body["registered"], false, "a new wallet has no passkey");
+
+    store
+        .put_passkey_credential("wallet-registered", b"{}", 0)
+        .await
+        .expect("the passkey should be stored");
+    let (_, body) = signed_post(
+        &app,
+        &device_key,
+        "/v1/passkeys/registered",
+        ask.clone(),
+        "b",
+    )
+    .await;
+    assert_eq!(body["registered"], true);
+
+    // Nobody else may ask, so this does not tell a stranger which wallets are ready to sign.
+    let (status, _) = post(&app, "/v1/passkeys/registered", ask.clone()).await;
+    assert_eq!(status, StatusCode::UNAUTHORIZED, "no proof must be refused");
+    let stranger = device_key_of(77);
+    let (status, _) = signed_post(&app, &stranger, "/v1/passkeys/registered", ask, "c").await;
+    assert_eq!(
+        status,
+        StatusCode::UNAUTHORIZED,
+        "another key must be refused"
+    );
+}
