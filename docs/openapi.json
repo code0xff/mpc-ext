@@ -10,6 +10,102 @@
     "version": "0.0.1"
   },
   "paths": {
+    "/manage/cancel": {
+      "post": {
+        "tags": [
+          "crate::manage"
+        ],
+        "summary": "Cancels a recovery on the session's wallet. Needs the session cookie and the page's origin.",
+        "operationId": "cancel",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ManageCancel"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "cancelled; what is still waiting",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ManageView"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "no live session, or a foreign origin"
+          },
+          "404": {
+            "description": "nothing to cancel"
+          }
+        }
+      }
+    },
+    "/manage/challenge": {
+      "get": {
+        "tags": [
+          "crate::manage"
+        ],
+        "summary": "Starts a passkey assertion for the management page. No proof is needed, and none is useful:\nthe challenge names no wallet.",
+        "operationId": "challenge",
+        "responses": {
+          "200": {
+            "description": "assertion options",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AssertOptionsResponse"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "too many challenges are waiting"
+          }
+        }
+      }
+    },
+    "/manage/session": {
+      "post": {
+        "tags": [
+          "crate::manage"
+        ],
+        "summary": "Verifies the assertion, opens a five minute session, and lists what is waiting.",
+        "description": "A passkey that no wallet has and a bad signature both answer `401`, so this cannot be used to\nask which passkeys exist.",
+        "operationId": "session",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ManageFinish"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "session opened",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ManageView"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "the assertion did not verify"
+          }
+        }
+      }
+    },
     "/v1/device-key": {
       "post": {
         "tags": [],
@@ -1138,6 +1234,53 @@
           }
         }
       },
+      "ManageCancel": {
+        "type": "object",
+        "description": "Which recovery to cancel.",
+        "required": [
+          "request_id"
+        ],
+        "properties": {
+          "request_id": {
+            "type": "string",
+            "description": "The request id."
+          }
+        }
+      },
+      "ManageFinish": {
+        "type": "object",
+        "description": "A passkey assertion answering a challenge from `/manage/challenge`.",
+        "required": [
+          "challenge_id",
+          "credential"
+        ],
+        "properties": {
+          "challenge_id": {
+            "type": "string",
+            "description": "The challenge the assertion answers."
+          },
+          "credential": {
+            "type": "object",
+            "description": "The browser's WebAuthn assertion, as JSON."
+          }
+        }
+      },
+      "ManageView": {
+        "type": "object",
+        "description": "The recoveries waiting on the wallet whose passkey was just used.",
+        "required": [
+          "recoveries"
+        ],
+        "properties": {
+          "recoveries": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/WaitingRecovery"
+            },
+            "description": "Recoveries past their passkey approval and not yet completed or cancelled."
+          }
+        }
+      },
       "PasskeyRegistered": {
         "type": "object",
         "description": "Whether a wallet has a passkey.",
@@ -1553,6 +1696,36 @@
               "$ref": "#/components/schemas/WireEnvelope"
             },
             "description": "The round 1 envelopes the server sends."
+          }
+        }
+      },
+      "WaitingRecovery": {
+        "type": "object",
+        "description": "A recovery waiting on the wallet.",
+        "required": [
+          "request_id",
+          "requested_at",
+          "ready_at",
+          "key_fingerprint"
+        ],
+        "properties": {
+          "key_fingerprint": {
+            "type": "string",
+            "description": "A short fingerprint of the requesting device's key."
+          },
+          "ready_at": {
+            "type": "integer",
+            "format": "int64",
+            "description": "When the new device could take over, in unix seconds."
+          },
+          "request_id": {
+            "type": "string",
+            "description": "The request id."
+          },
+          "requested_at": {
+            "type": "integer",
+            "format": "int64",
+            "description": "When it was asked, in unix seconds."
           }
         }
       },

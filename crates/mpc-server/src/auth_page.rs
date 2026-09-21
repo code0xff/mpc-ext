@@ -223,11 +223,11 @@ fn session_cookie(headers: &HeaderMap) -> Result<String, ApiError> {
     Ok(value.to_owned())
 }
 
-fn json_response<T: Serialize>(value: &T) -> Response {
+pub(crate) fn json_response<T: Serialize>(value: &T) -> Response {
     security_headers(Json(value).into_response())
 }
 
-fn security_headers(mut response: Response) -> Response {
+pub(crate) fn security_headers(mut response: Response) -> Response {
     response.headers_mut().insert(
         header::CACHE_CONTROL,
         HeaderValue::from_static("no-store, max-age=0"),
