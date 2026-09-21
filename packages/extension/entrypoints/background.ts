@@ -10,6 +10,8 @@ import * as eventLog from '../src/eventLog';
 import type {
   CreatedKey,
   ExportedKey,
+  PendingRecoveryInfo,
+  RecoveryProgress,
   Request,
   ReshareProgress,
   Response,
@@ -30,13 +32,27 @@ import { reshareGrantDigest } from '../src/reshare';
 import {
   createPasskeyHandoff,
   abortReshare,
+  cancelRecovery,
   commitReshare,
+  completeRecovery,
   health as serverHealth,
   passkeyCeremonyStatus,
+  pendingRecoveries,
+  recoveryStatus,
   registerDeviceKey,
+  requestRecovery,
   ServerUnreachable,
 } from '../src/serverClient';
-import { createDeviceKey, exportDevicePublicKey, storeDeviceKey } from '../src/deviceKey';
+import {
+  createDeviceKey,
+  discardPendingDeviceKey,
+  exportDevicePublicKey,
+  loadPendingDeviceKey,
+  promotePendingDeviceKey,
+  storeDeviceKey,
+  storePendingDeviceKey,
+} from '../src/deviceKey';
+import * as recoveryState from '../src/recoveryState';
 import * as settings from '../src/settings';
 import * as vault from '../src/vault';
 import { ethereum_address, export_private_key, loadWasm, threshold_config } from '../src/wasm';
@@ -208,31 +224,173 @@ function cancelOnboarding(): void {
 }
 
 /**
- * Restores a wallet on a fresh install from a recovery file.
+ * Starts restoring a wallet on a fresh install (`docs/adr/0008-recovery-start-and-device-key-replacement.md`).
  *
- * The imported share becomes this install's share, and everyday signing runs recovery share plus
- * server. The wallet can spend again but is **not** a healthy 2-of-3: the lost share stays valid
- * and there is no longer an independent backup, because reshaping the key would need two shares
- * in one place (`docs/recovery.md`). The UI has to tell the user that.
+ * This install has no device key the server accepts, so it makes a new one, keeps it aside, and
+ * asks the server to let it take over. That needs the user's passkey, approved in a tab on the
+ * server's origin, and then a waiting period during which the wallet's current device can object.
+ * Nothing is replaced until `finishRecovery`.
  */
-async function recoverFromFile(
+async function beginRecovery(walletId: string, publicKeyHex: string): Promise<RecoveryProgress> {
+  if (await vault.exists()) throw new Error('A key already exists.');
+  if (await recoveryState.read()) {
+    throw new Error('A recovery is already in progress. Cancel it before starting another.');
+  }
+
+  const serverUrl = await settings.serverUrl();
+  const deviceKey = await createDeviceKey();
+  await storePendingDeviceKey(deviceKey);
+  try {
+    const requested = await requestRecovery(
+      serverUrl,
+      walletId,
+      await exportDevicePublicKey(deviceKey.publicKey),
+    );
+    await recoveryState.write({ walletId, publicKeyHex, requestId: requested.request_id });
+    await openCeremony(serverUrl, requested.handoff_token, requested.ceremony_id);
+  } catch (error) {
+    await discardPendingDeviceKey().catch(() => undefined);
+    await recoveryState.clear().catch(() => undefined);
+    throw error;
+  }
+  return { phase: 'awaitingAssertion' };
+}
+
+/**
+ * Reports how far the recovery has got, and moves it along: asking the server is what starts the
+ * waiting period once the passkey has approved. An ended recovery is reported once and cleaned up.
+ */
+async function recoveryProgress(): Promise<RecoveryProgress> {
+  const recovery = await recoveryState.read();
+  if (!recovery) return { phase: 'idle' };
+  const deviceKey = await loadPendingDeviceKey();
+  if (!deviceKey) {
+    await recoveryState.clear();
+    return { phase: 'ended', reason: 'expired' };
+  }
+
+  const result = await recoveryStatus(
+    await settings.serverUrl(),
+    recovery.walletId,
+    recovery.requestId,
+    deviceKey,
+  );
+  switch (result.state) {
+    case 'awaitingAssertion':
+      return { phase: 'awaitingAssertion' };
+    case 'cooling':
+      await closeCeremonyTab();
+      return { phase: 'cooling', readyAt: result.ready_at };
+    case 'ready':
+    case 'completed':
+      // If the server already replaced the key but this install did not finish, finishing is still
+      // the right next step.
+      await closeCeremonyTab();
+      return { phase: 'ready' };
+    case 'cancelled':
+    case 'expired':
+      await closeCeremonyTab();
+      await discardPendingDeviceKey();
+      await recoveryState.clear();
+      return { phase: 'ended', reason: result.state };
+  }
+}
+
+/**
+ * Finishes a recovery whose waiting period is over.
+ *
+ * The server replaces the wallet's device key with the one this install kept aside, and the
+ * recovery share becomes this install's share. Safe to retry: if the server already completed, only
+ * the local steps are repeated. The wallet works again but is not a healthy 2-of-3, and the lost
+ * share stays valid, until it is reshared (`docs/recovery.md`).
+ */
+async function finishRecovery(
   password: string,
-  walletId: string,
   publicKeyHex: string,
   recoveryShareHex: string,
 ): Promise<Status> {
   if (password.length < 8) throw new Error('The password must be at least 8 characters.');
   if (await vault.exists()) throw new Error('A key already exists.');
+  const recovery = await recoveryState.read();
+  if (!recovery) throw new Error('There is no recovery in progress.');
+  if (publicKeyHex !== recovery.publicKeyHex) {
+    throw new Error('This recovery file belongs to a different wallet than the recovery started.');
+  }
+  const deviceKey = await loadPendingDeviceKey();
+  if (!deviceKey) throw new Error('This recovery lost its device key. Start it again.');
+
+  const serverUrl = await settings.serverUrl();
+  const result = await recoveryStatus(serverUrl, recovery.walletId, recovery.requestId, deviceKey);
+  if (result.state === 'awaitingAssertion') {
+    throw new Error('The passkey has not approved this recovery yet.');
+  }
+  if (result.state === 'cooling') {
+    throw new Error(
+      `The waiting period ends ${new Date(result.ready_at * 1000).toLocaleString()}.`,
+    );
+  }
+  if (result.state === 'cancelled' || result.state === 'expired') {
+    await discardPendingDeviceKey();
+    await recoveryState.clear();
+    throw new Error('This recovery has ended. Start it again.');
+  }
+  if (result.state === 'ready') {
+    await completeRecovery(serverUrl, recovery.walletId, recovery.requestId, deviceKey);
+  }
 
   const share = fromHex(recoveryShareHex);
-  const deviceKey = await createDeviceKey();
-  const publicDeviceKey = await exportDevicePublicKey(deviceKey.publicKey);
-  await registerDeviceKey(await settings.serverUrl(), walletId, publicDeviceKey);
-  await storeDeviceKey(deviceKey);
-  await vault.store(password, share, publicKeyHex, walletId, PARTY.recovery);
+  await promotePendingDeviceKey();
+  await vault.store(password, share, recovery.publicKeyHex, recovery.walletId, PARTY.recovery);
   unlockedShare = share;
-
+  await recoveryState.clear();
   return status();
+}
+
+/** Gives up on a recovery in progress. The server is told, so it does not keep waiting. */
+async function abandonRecovery(): Promise<Status> {
+  const recovery = await recoveryState.read();
+  if (recovery) {
+    const deviceKey = await loadPendingDeviceKey();
+    if (deviceKey) {
+      // A failure to reach the server must not keep the user stuck. The request lapses there.
+      await cancelRecovery(
+        await settings.serverUrl(),
+        recovery.walletId,
+        recovery.requestId,
+        deviceKey,
+      ).catch(() => undefined);
+    }
+  }
+  await closeCeremonyTab();
+  await discardPendingDeviceKey().catch(() => undefined);
+  await recoveryState.clear();
+  return status();
+}
+
+/** Recoveries someone has asked for on this wallet. Empty while the server cannot be reached. */
+async function listPendingRecoveries(): Promise<PendingRecoveryInfo[]> {
+  const walletId = await vault.walletId();
+  if (!walletId) return [];
+  try {
+    const pending = await pendingRecoveries(await settings.serverUrl(), walletId);
+    return pending.map((item) => ({
+      requestId: item.request_id,
+      requestedAt: item.requested_at,
+      readyAt: item.ready_at,
+      keyFingerprint: item.key_fingerprint,
+    }));
+  } catch (error) {
+    if (error instanceof ServerUnreachable) return [];
+    throw error;
+  }
+}
+
+/** Objects to a recovery someone asked for, using this install's device key. */
+async function cancelPendingRecovery(requestId: string): Promise<PendingRecoveryInfo[]> {
+  const walletId = await vault.walletId();
+  if (!walletId) throw new Error('This wallet is not initialized.');
+  await cancelRecovery(await settings.serverUrl(), walletId, requestId);
+  return listPendingRecoveries();
 }
 
 async function unlock(password: string): Promise<Status> {
@@ -251,14 +409,29 @@ async function startPasskey(
   if (!walletId) throw new Error('This wallet is not initialized.');
   const serverUrl = await settings.serverUrl();
   const handoff = await createPasskeyHandoff(serverUrl, walletId, purpose, operationId, digest);
-  pendingPasskey = {
-    serverUrl,
-    handoffToken: handoff.handoff_token,
-    ceremonyId: handoff.ceremony_id,
-  };
+  await openCeremony(serverUrl, handoff.handoff_token, handoff.ceremony_id);
+  return { ceremonyId: handoff.ceremony_id };
+}
+
+/**
+ * Opens the server-origin passkey ceremony in a tab. The tab loads an extension page that submits
+ * the one-use token to the server in a form body, so the token is never in a URL.
+ */
+async function openCeremony(
+  serverUrl: string,
+  handoffToken: string,
+  ceremonyId: string,
+): Promise<void> {
+  pendingPasskey = { serverUrl, handoffToken, ceremonyId };
   const tab = await chrome.tabs.create({ url: chrome.runtime.getURL('auth-launcher.html') });
   pendingPasskey.tabId = tab.id;
-  return { ceremonyId: handoff.ceremony_id };
+}
+
+/** Closes the ceremony tab once its outcome is known. */
+async function closeCeremonyTab(): Promise<void> {
+  const tabId = pendingPasskey?.tabId;
+  pendingPasskey = undefined;
+  if (tabId !== undefined) await chrome.tabs.remove(tabId).catch(() => undefined);
 }
 
 async function passkeyLauncherReady(): Promise<{ serverUrl: string; handoffToken: string }> {
@@ -643,13 +816,18 @@ async function handle(request: Request): Promise<unknown> {
       return sign(request.digestHex);
     case 'signOffline':
       return signOffline(request.digestHex, request.recoveryShareHex);
-    case 'recoverFromFile':
-      return recoverFromFile(
-        request.password,
-        request.walletId,
-        request.publicKeyHex,
-        request.recoveryShareHex,
-      );
+    case 'beginRecovery':
+      return beginRecovery(request.walletId, request.publicKeyHex);
+    case 'recoveryProgress':
+      return recoveryProgress();
+    case 'finishRecovery':
+      return finishRecovery(request.password, request.publicKeyHex, request.recoveryShareHex);
+    case 'abandonRecovery':
+      return abandonRecovery();
+    case 'pendingRecoveries':
+      return listPendingRecoveries();
+    case 'cancelPendingRecovery':
+      return cancelPendingRecovery(request.requestId);
     case 'startReshare':
       return startReshare(request.password);
     case 'reshareProgress':

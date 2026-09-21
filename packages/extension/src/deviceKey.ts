@@ -10,7 +10,9 @@
 const encoder = new TextEncoder();
 const DB_NAME = 'mpc-ext-device';
 const STORE = 'device-key';
-const RECORD = 'pair';
+const ACTIVE = 'pair';
+/** A key that has asked to take over but has not yet been accepted by the server. */
+const PENDING = 'pending';
 
 export interface SignedRequest {
   timestamp: number;
@@ -74,12 +76,43 @@ async function withStore<T>(
 
 /** Stores the non-extractable pair. It never leaves this browser profile. */
 export async function storeDeviceKey(pair: CryptoKeyPair): Promise<void> {
-  await withStore('readwrite', (store) => store.put(pair, RECORD));
+  await withStore('readwrite', (store) => store.put(pair, ACTIVE));
 }
 
 /** Loads the installation key pair, if this wallet has one. */
 export async function loadDeviceKey(): Promise<CryptoKeyPair | undefined> {
-  const pair = await withStore<CryptoKeyPair | undefined>('readonly', (store) => store.get(RECORD));
+  return load(ACTIVE);
+}
+
+/**
+ * Keeps a new key aside while a recovery waits (`docs/adr/0008-recovery-start-and-device-key-replacement.md`).
+ * The server does not accept it yet, and a recovery can take a day, so it has to survive the
+ * popup and the worker closing.
+ */
+export async function storePendingDeviceKey(pair: CryptoKeyPair): Promise<void> {
+  await withStore('readwrite', (store) => store.put(pair, PENDING));
+}
+
+/** Loads the key waiting for a recovery to finish, if there is one. */
+export async function loadPendingDeviceKey(): Promise<CryptoKeyPair | undefined> {
+  return load(PENDING);
+}
+
+/** Makes the waiting key the installation's key, once the server has accepted it. */
+export async function promotePendingDeviceKey(): Promise<void> {
+  const pair = await loadPendingDeviceKey();
+  if (!pair) throw new Error('There is no pending device key to activate.');
+  await storeDeviceKey(pair);
+  await discardPendingDeviceKey();
+}
+
+/** Drops the key waiting for a recovery. */
+export async function discardPendingDeviceKey(): Promise<void> {
+  await withStore('readwrite', (store) => store.delete(PENDING));
+}
+
+async function load(record: string): Promise<CryptoKeyPair | undefined> {
+  const pair = await withStore<CryptoKeyPair | undefined>('readonly', (store) => store.get(record));
   // A pair that lost its keys on the way in would fail later with a confusing WebCrypto error.
   return pair?.privateKey instanceof CryptoKey ? pair : undefined;
 }

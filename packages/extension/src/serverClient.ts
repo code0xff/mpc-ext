@@ -86,16 +86,23 @@ export class ServerUnreachable extends Error {
   }
 }
 
+/**
+ * Sends a JSON request. `authenticate` is `true` to sign with this install's device key, a key
+ * pair to sign with that one instead (a recovery is signed by the key waiting to take over), or
+ * `false` for no proof.
+ *
+ * The proof covers the exact text sent, which is why `serialized` is built once and reused.
+ */
 async function post<T>(
   baseUrl: string,
   path: string,
   body: unknown,
-  authenticate = false,
+  authenticate: boolean | CryptoKeyPair = false,
 ): Promise<T> {
   const serialized = JSON.stringify(body);
   const headers: Record<string, string> = { 'content-type': 'application/json' };
   if (authenticate) {
-    const deviceKey = await loadDeviceKey();
+    const deviceKey = authenticate === true ? await loadDeviceKey() : authenticate;
     if (!deviceKey) throw new Error('The device is not registered with the server.');
     const proof = await signRequest(deviceKey.privateKey, 'POST', path, serialized);
     headers['x-device-timestamp'] = String(proof.timestamp);
@@ -211,6 +218,103 @@ export async function abortReshare(
     '/v1/reshare/abort',
     { wallet_id: walletId, reshare_id: reshareIdHex },
     true,
+  );
+}
+
+/** What the server says about a recovery request. `readyAt` is unix seconds. */
+export type RecoveryStatus =
+  | { state: 'awaitingAssertion' }
+  | { state: 'cooling'; ready_at: number }
+  | { state: 'ready' }
+  | { state: 'completed' }
+  | { state: 'cancelled' }
+  | { state: 'expired' };
+
+export interface RecoveryRequested {
+  request_id: string;
+  ceremony_id: string;
+  handoff_token: string;
+}
+
+export interface PendingRecovery {
+  request_id: string;
+  requested_at: number;
+  ready_at: number;
+  key_fingerprint: string;
+}
+
+/**
+ * Asks to recover this wallet onto a new device key. No device proof: this install has none the
+ * server accepts yet. It only asks for a passkey assertion and changes nothing by itself
+ * (`docs/adr/0008-recovery-start-and-device-key-replacement.md`).
+ */
+export async function requestRecovery(
+  baseUrl: string,
+  walletId: string,
+  devicePublicKeyHex: string,
+): Promise<RecoveryRequested> {
+  return post<RecoveryRequested>(baseUrl, '/v1/recovery/request', {
+    wallet_id: walletId,
+    device_public_key: devicePublicKeyHex,
+  });
+}
+
+/** Where the request stands. Signed with the new key, and it starts the wait once approved. */
+export async function recoveryStatus(
+  baseUrl: string,
+  walletId: string,
+  requestId: string,
+  newKey: CryptoKeyPair,
+): Promise<RecoveryStatus> {
+  return post<RecoveryStatus>(
+    baseUrl,
+    '/v1/recovery/status',
+    { wallet_id: walletId, request_id: requestId },
+    newKey,
+  );
+}
+
+/** Replaces the wallet's device key with the new one, after the wait. Signed with the new key. */
+export async function completeRecovery(
+  baseUrl: string,
+  walletId: string,
+  requestId: string,
+  newKey: CryptoKeyPair,
+): Promise<void> {
+  await post<void>(
+    baseUrl,
+    '/v1/recovery/complete',
+    { wallet_id: walletId, request_id: requestId },
+    newKey,
+  );
+}
+
+/** Recoveries waiting on this wallet. Signed with the install's current device key. */
+export async function pendingRecoveries(
+  baseUrl: string,
+  walletId: string,
+): Promise<PendingRecovery[]> {
+  const body = await post<{ pending: PendingRecovery[] }>(
+    baseUrl,
+    '/v1/recovery/pending',
+    { wallet_id: walletId },
+    true,
+  );
+  return body.pending;
+}
+
+/** Cancels a recovery. `key` is the pending key when withdrawing; the current key otherwise. */
+export async function cancelRecovery(
+  baseUrl: string,
+  walletId: string,
+  requestId: string,
+  key: CryptoKeyPair | true = true,
+): Promise<void> {
+  await post<void>(
+    baseUrl,
+    '/v1/recovery/cancel',
+    { wallet_id: walletId, request_id: requestId },
+    key,
   );
 }
 
