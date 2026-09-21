@@ -41,7 +41,9 @@ try {
   if (popupErrors.length > 0) {
     throw new Error(`the popup threw while rendering: ${popupErrors.join('; ')}`);
   }
-  if (!drawn.includes('Unaudited') || !drawn.includes('Create a key')) {
+  // Headings are uppercased by CSS, and innerText reflects that, so match without case.
+  const flat = drawn.toLowerCase();
+  if (!flat.includes('unaudited') || !flat.includes('create a key')) {
     throw new Error(`the popup did not render. It shows: "${drawn.slice(0, 120)}"`);
   }
   console.log('popup rendered:', drawn.slice(0, 60) + '…');
