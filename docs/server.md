@@ -57,27 +57,30 @@ Rules:
 
 ## API
 
-| Endpoint                             | Purpose                                         |
-| ------------------------------------ | ----------------------------------------------- |
-| `POST /v1/dkg/session`               | Open a DKG session                              |
-| `POST /v1/dkg/round`                 | Exchange DKG round messages                     |
-| `POST /v1/sign/session`              | Open an everyday signing session                |
-| `POST /v1/sign/round`                | Exchange signing round messages                 |
-| `POST /v1/passkeys/register/options` | Start a server-origin passkey registration      |
-| `POST /v1/passkeys/register/finish`  | Verify and persist a passkey registration       |
-| `POST /v1/passkeys/assert/options`   | Start an operation-bound assertion              |
-| `POST /v1/passkeys/assert/finish`    | Verify and consume an assertion                 |
-| `POST /v1/passkeys/handoff`          | Create a one-use server-origin browser handoff  |
-| `POST /v1/passkeys/ceremony/status`  | Read browser ceremony status                    |
-| `POST /auth/handoff`                 | Exchange a body token for an HttpOnly session   |
-| `GET  /auth`                         | Serve the fixed-origin WebAuthn ceremony page   |
-| `POST /v1/reshare/session`           | Open a reshare (device key + `recovery` grant)  |
-| `POST /v1/reshare/round`             | Advance a reshare; the last round stages C'     |
-| `POST /v1/reshare/commit`            | Swap the staged share in and delete the old one |
-| `POST /v1/reshare/abort`             | Drop a reshare; the current share stays live    |
-| `POST /v1/recovery/request`          | Start recovery (begins the cooling-off period)  |
-| `POST /v1/recovery/sign`             | Join recovery-mode signing                      |
-| `GET  /v1/health`                    | Health check                                    |
+| Endpoint                             | Purpose                                               |
+| ------------------------------------ | ----------------------------------------------------- |
+| `POST /v1/dkg/session`               | Open a DKG session                                    |
+| `POST /v1/dkg/round`                 | Exchange DKG round messages                           |
+| `POST /v1/sign/session`              | Open an everyday signing session                      |
+| `POST /v1/sign/round`                | Exchange signing round messages                       |
+| `POST /v1/passkeys/register/options` | Start a server-origin passkey registration            |
+| `POST /v1/passkeys/register/finish`  | Verify and persist a passkey registration             |
+| `POST /v1/passkeys/assert/options`   | Start an operation-bound assertion                    |
+| `POST /v1/passkeys/assert/finish`    | Verify and consume an assertion                       |
+| `POST /v1/passkeys/handoff`          | Create a one-use server-origin browser handoff        |
+| `POST /v1/passkeys/ceremony/status`  | Read browser ceremony status                          |
+| `POST /auth/handoff`                 | Exchange a body token for an HttpOnly session         |
+| `GET  /auth`                         | Serve the fixed-origin WebAuthn ceremony page         |
+| `POST /v1/reshare/session`           | Open a reshare (device key + `recovery` grant)        |
+| `POST /v1/reshare/round`             | Advance a reshare; the last round stages C'           |
+| `POST /v1/reshare/commit`            | Swap the staged share in and delete the old one       |
+| `POST /v1/reshare/abort`             | Drop a reshare; the current share stays live          |
+| `POST /v1/recovery/request`          | Ask to recover onto a new device key (no proof)       |
+| `POST /v1/recovery/status`           | Where a request stands; starts the wait once approved |
+| `POST /v1/recovery/complete`         | Replace the device key, after the wait                |
+| `POST /v1/recovery/pending`          | Recoveries waiting on a wallet, for its owner         |
+| `POST /v1/recovery/cancel`           | Cancel or withdraw a recovery                         |
+| `GET  /v1/health`                    | Health check                                          |
 
 - `GET /docs` serves Swagger UI and `GET /openapi.json` the spec.
 - The spec is generated from code (`make openapi`) and the generated
@@ -165,3 +168,29 @@ checks that it stays `[-7]`.
 
 Rejected assertions all reach the client as `authentication failed`. The server logs the reason at
 `warn` (never the credential), and that log is the only place an operator can see it.
+
+## Device keys and recovery
+
+[ADR-0008](adr/0008-recovery-start-and-device-key-replacement.md) has the reasoning.
+
+- **The proof covers the exact bytes sent.** `X-Device-Signature` signs
+  `METHOD \n path \n timestamp \n nonce \n body`, where `body` is the request text as received.
+  The server no longer re-serializes, so key order and `null` handling cannot make it disagree with
+  a client. Handlers take a `SignedJson` extractor that keeps the raw text.
+- **`POST /v1/device-key` is first-use only.** A wallet that already has a key is refused. The key
+  changes only through a recovery.
+- **A recovery is asked for without a proof,** because the install asking has no key the server
+  accepts. The request records the new key and opens a passkey ceremony bound to it: the
+  assertion's operation id is the request id and its digest is
+  `SHA-256("mpc-ext recovery v1" || wallet id || 0x00 || new device key || request id)`.
+- **The new key signs `status` and `complete`.** The first `status` call after the assertion is
+  verified consumes it and starts the wait. `complete` works after `ready_at` and within 72 hours,
+  and replaces the key and ends the wallet's other open requests in one transaction.
+- **`pending` and `cancel`** use the wallet's current key, so an existing install can see and object
+  to a recovery. `cancel` also accepts the request's own key, so the requester can withdraw.
+- **Limits.** Five requests per wallet per hour (`429` beyond that), one request waiting per
+  wallet, and an unapproved request lapses after 15 minutes.
+- **`MPC_SERVER_RECOVERY_COOLING_SECONDS`** sets the wait, 24 hours by default. Zero makes recovery
+  instant for testing and removes the protection the wait gives.
+- Times are stored as unix seconds. The older RFC 3339 columns are compared as strings, which
+  orders wrongly when the fractional digits differ in length.

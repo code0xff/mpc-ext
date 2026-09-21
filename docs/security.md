@@ -2,16 +2,17 @@
 
 ## Threat model
 
-| Threat                                           | Mitigation                                                                                                                                                   |
-| ------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| A malicious page tricks the user into signing    | Origin checks, explicit user approval, and the signing payload shown in the UI                                                                               |
-| Server compromise                                | The server holds only share C. It cannot sign or reconstruct alone                                                                                           |
-| Device theft (extension data taken while locked) | Storage is fully encrypted and useless without the password                                                                                                  |
-| **Extension taken over while unlocked**          | The extension holds only share A, so it **cannot sign alone.** The server acts as the second factor with rate limits, anomaly blocking and user confirmation |
-| Recovery file stolen                             | Only share B, encrypted under its own password. Cannot sign alone                                                                                            |
-| Service shutdown or outage                       | The user signs with A + B. Funds are not locked                                                                                                              |
-| Supply chain attack                              | Minimal dependencies, pinned lockfiles, reproducible builds, signed releases                                                                                 |
-| Memory scraping                                  | Zeroize after use, auto-lock when idle                                                                                                                       |
+| Threat                                           | Mitigation                                                                                                                                                                     |
+| ------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| A malicious page tricks the user into signing    | Origin checks, explicit user approval, and the signing payload shown in the UI                                                                                                 |
+| Server compromise                                | The server holds only share C. It cannot sign or reconstruct alone                                                                                                             |
+| Device theft (extension data taken while locked) | Storage is fully encrypted and useless without the password                                                                                                                    |
+| **Extension taken over while unlocked**          | The extension holds only share A, so it **cannot sign alone.** The server acts as the second factor with rate limits, anomaly blocking and user confirmation                   |
+| Recovery file stolen                             | Only share B, encrypted under its own password. Cannot sign alone                                                                                                              |
+| Stranger who knows a wallet id                   | Cannot replace the device key. Registration is first-use only, and a recovery needs the passkey and a wait ([adr/0008](adr/0008-recovery-start-and-device-key-replacement.md)) |
+| Service shutdown or outage                       | The user signs with A + B. Funds are not locked                                                                                                                                |
+| Supply chain attack                              | Minimal dependencies, pinned lockfiles, reproducible builds, signed releases                                                                                                   |
+| Memory scraping                                  | Zeroize after use, auto-lock when idle                                                                                                                                         |
 
 **Out of scope**: a rooted OS, kernel-level keyloggers, physical coercion.
 

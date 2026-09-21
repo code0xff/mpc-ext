@@ -53,6 +53,11 @@
 - [x] Require one verified assertion for each signing operation
 - [x] Require one verified assertion for each recovery operation (recovery-share signing needs a `recovery` grant)
 - [x] Signing approval UI (digest-level; the origin-aware screen arrives with the provider)
+- [x] Recovery start needs a passkey assertion and a cooling-off wait, and the device key can be
+      replaced only through it ([adr/0008](adr/0008-recovery-start-and-device-key-replacement.md))
+- [x] Device proof over the exact request bytes
+- [ ] Cancel a recovery with the passkey, and look up waiting recoveries from a fresh browser
+- [ ] Register a passkey during onboarding (no screen does it yet, so a new wallet cannot sign)
 
 ## Phase 4 — web integration
 

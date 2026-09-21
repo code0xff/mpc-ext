@@ -44,6 +44,8 @@ Three details are worth knowing when it breaks:
   as its relying-party id, and the server's default is `localhost`.
 - Chrome's virtual authenticator cannot satisfy `enforceCredentialProtectionPolicy` at any
   setting. The script removes only that flag in the test browser. The server still enforces it.
+- The smoke server runs with `MPC_SERVER_RECOVERY_COOLING_SECONDS=0`, since a test cannot wait a
+  day. The waiting rules are covered by the server's own tests.
 - `SMOKE_DEBUG=1` prints each tab, HTTP status and credential event, which is usually enough to
   find where a ceremony stopped.
 
