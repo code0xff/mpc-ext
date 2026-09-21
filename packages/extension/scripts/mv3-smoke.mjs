@@ -117,21 +117,8 @@ const credentials = new Map();
 async function attachAuthenticator(target) {
   if (target.type() !== 'page') return;
 
-  // The server registers passkeys with `enforceCredentialProtectionPolicy`, and Chrome's virtual
-  // authenticator cannot satisfy that at any setting (checked with a standalone probe: it fails
-  // with credProtect enforced and works without). Hardware keys support the extension. So drop
-  // only that flag in this test browser, and leave the server's policy alone.
-  const page = await target.page();
-  await page?.evaluateOnNewDocument(() => {
-    const create = navigator.credentials.create.bind(navigator.credentials);
-    navigator.credentials.create = (options) => {
-      if (options?.publicKey?.extensions) {
-        delete options.publicKey.extensions.enforceCredentialProtectionPolicy;
-      }
-      return create(options);
-    };
-  });
-
+  // The authenticator comes first. It is what the ceremony page needs, and the page can call
+  // WebAuthn within a few round trips of the tab opening.
   const session = await target.createCDPSession();
   await session.send('WebAuthn.enable', { enableUI: false });
   const { authenticatorId } = await session.send('WebAuthn.addVirtualAuthenticator', {
@@ -148,14 +135,90 @@ async function attachAuthenticator(target) {
     await session.send('WebAuthn.addCredential', { authenticatorId, credential });
   }
   const remember = ({ credential }) => {
-    if (process.env.SMOKE_DEBUG)
+    if (process.env.SMOKE_DEBUG) {
       console.log(
         `[credential] ${credential.credentialId.slice(0, 12)}… count=${credential.signCount}`,
       );
+    }
     credentials.set(credential.credentialId, credential);
   };
   session.on('WebAuthn.credentialAdded', remember);
   session.on('WebAuthn.credentialAsserted', remember);
+
+  // The server registers passkeys with `enforceCredentialProtectionPolicy`, and Chrome's virtual
+  // authenticator cannot satisfy that at any setting (checked with a standalone probe: it fails
+  // with credProtect enforced and works without). Hardware keys support the extension. So drop
+  // only that flag in this test browser, and leave the server's policy alone.
+  const page = await target.page();
+  await page?.evaluateOnNewDocument(() => {
+    const create = navigator.credentials.create.bind(navigator.credentials);
+    navigator.credentials.create = (options) => {
+      if (options?.publicKey?.extensions) {
+        delete options.publicKey.extensions.enforceCredentialProtectionPolicy;
+      }
+      return create(options);
+    };
+  });
+  if (page) void ensureCeremonyRunsWithAuthenticator(page);
+}
+
+/**
+ * Makes sure the ceremony page asks for a credential only once an authenticator is there.
+ *
+ * The extension opens the tab, and this script attaches an authenticator to it afterwards. If the
+ * page calls WebAuthn first, Chrome does not fail the call. It waits for a device, and one added
+ * later is not used for that call, so the ceremony hangs with no error. That is a race between
+ * this script and the page, and it shows up on slow machines.
+ *
+ * The server gives out the same options again for the same ceremony, so loading the page again is
+ * safe. Every reload is logged: a failure that is real repeats and shows, only a race clears.
+ */
+async function ensureCeremonyRunsWithAuthenticator(page) {
+  const onCeremonyPage = () => new URL(page.url()).pathname === '/auth';
+
+  // The authenticator is ready now. A page that is already on the ceremony page may have called
+  // WebAuthn before that, so run it again. A page still on its way there will find it ready.
+  if (onCeremonyPage()) {
+    console.log('[ceremony] the page was already open when the authenticator arrived, reloading');
+    await page.reload().catch(() => undefined);
+  }
+
+  // After that, watch for a ceremony that fails or stops moving.
+  let stuckSince;
+  for (let attempt = 1; attempt <= 40; attempt += 1) {
+    await delay(750);
+    if (page.isClosed()) return;
+    const view = await page
+      .evaluate(() => {
+        const error = document.getElementById('error');
+        const status = document.getElementById('status');
+        return {
+          failure: error && !error.hidden ? error.textContent : '',
+          waiting: Boolean(
+            status && !status.hidden && /authenticator prompt/i.test(status.textContent),
+          ),
+        };
+      })
+      .catch(() => ({ failure: '', waiting: false }));
+
+    if (view.failure) {
+      console.log(`[ceremony] the page reported "${view.failure}", reloading (check ${attempt})`);
+      stuckSince = undefined;
+      await page.reload().catch(() => undefined);
+    } else if (view.waiting) {
+      stuckSince ??= Date.now();
+      // A prompt is answered within a fraction of a second here. Waiting longer means it is stuck.
+      if (Date.now() - stuckSince > 6000) {
+        console.log(
+          `[ceremony] the page has waited for the authenticator too long, reloading (check ${attempt})`,
+        );
+        stuckSince = undefined;
+        await page.reload().catch(() => undefined);
+      }
+    } else {
+      stuckSince = undefined;
+    }
+  }
 }
 
 const profile = await mkdtemp(join(tmpdir(), 'mpc-ext-smoke-'));

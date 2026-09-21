@@ -46,6 +46,13 @@ Three details are worth knowing when it breaks:
   setting. The script removes only that flag in the test browser. The server still enforces it.
 - The smoke server runs with `MPC_SERVER_RECOVERY_COOLING_SECONDS=0`, since a test cannot wait a
   day. The waiting rules are covered by the server's own tests.
+- The script attaches the authenticator after the extension has opened the tab, so it can lose a
+  race against the ceremony page. Chrome does not fail a WebAuthn call made before an
+  authenticator exists. It waits, and an authenticator added later is not used for that call, so
+  the ceremony hangs with no error and no server log. The script reloads the page once the
+  authenticator is attached, and again if the page reports a failure or waits too long, and prints
+  a `[ceremony]` line each time. The server gives out the same options again for the same
+  ceremony, so reloading is safe. A `[ceremony]` line is normal. Many of them in a row are not.
 - `SMOKE_DEBUG=1` prints each tab, HTTP status and credential event, which is usually enough to
   find where a ceremony stopped.
 
