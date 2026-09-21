@@ -128,8 +128,6 @@ export function App() {
         </dl>
       </section>
 
-      {status?.kind === 'uninitialized' && <RecoverPanel onRecovered={setStatus} />}
-
       {status?.kind === 'uninitialized' && (
         <CreateKey
           busy={busy}
@@ -141,6 +139,9 @@ export function App() {
           }
         />
       )}
+
+      {/* Creating a wallet is what almost everyone does here; restoring is the exception. */}
+      {status?.kind === 'uninitialized' && <RecoverPanel onRecovered={setStatus} />}
 
       {status?.kind === 'awaitingRecoveryExport' && created && (
         <RecoveryExportCard
