@@ -2,6 +2,18 @@ import { defineConfig } from 'wxt';
 
 export default defineConfig({
   modules: ['@wxt-dev/module-react'],
+  vite: () => ({
+    build: {
+      rollupOptions: {
+        output: {
+          // Chrome reserves file names that start with an underscore and can refuse to serve them
+          // (net::ERR_ACCESS_DENIED), which leaves the popup blank. Rollup names a shared chunk
+          // `_virtual_…`, so strip the leading underscores.
+          sanitizeFileName: (name: string) => name.replace(/[\0?*:"<>|]/g, '_').replace(/^_+/, ''),
+        },
+      },
+    },
+  }),
   manifest: {
     name: 'mpc-ext',
     description: 'Holds a 2-of-3 MPC key. Unaudited — do not use with real assets.',
